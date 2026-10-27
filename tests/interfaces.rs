@@ -190,6 +190,92 @@ async fn real_stdio_mcp_discovery_mutation_errors_and_cli_interoperation() {
 }
 
 #[tokio::test]
+async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let saved = call_mcp(
+            &client,
+            "create_note",
+            json!({"body": "Original private fixture", "private": true}),
+        )
+        .await;
+        let id = saved["note"]["id"].as_str().unwrap();
+        let original = fs::read(
+            temp.path()
+                .join(".robostickies")
+                .join(saved["note"]["path"].as_str().unwrap()),
+        )
+        .unwrap();
+        let tools = client.list_all_tools().await.unwrap();
+        let mut accepted = vec![];
+        let mut open_schemas = vec![];
+        for tool in &tools {
+            let mut arguments = match tool.name.as_ref() {
+                "get_note" => json!({"id": id}),
+                "get_tag" => json!({"name": "papercut"}),
+                "create_note" => json!({"body": "Unexpected note"}),
+                "update_note" => json!({"id": id, "body": "Unexpected edit"}),
+                "publish_note" => json!({"id": id, "dry_run": true}),
+                "create_tag" => json!({"name": "unexpected", "topic": "Unexpected tag"}),
+                "get_context" | "init_store" | "list_notes" | "review_notes" | "list_tags"
+                | "get_config" | "validate_store" | "rebuild_index" => json!({}),
+                name => panic!("Add a valid input for the new tool {name}"),
+            };
+            arguments["unexpected_field"] = json!(true);
+            let result = client
+                .call_tool(
+                    CallToolRequestParams::new(tool.name.clone())
+                        .with_arguments(arguments.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            if result.is_error != Some(true) {
+                accepted.push(tool.name.clone());
+            }
+            if tool.input_schema.get("additionalProperties") != Some(&json!(false)) {
+                open_schemas.push(tool.name.clone());
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "Unknown fields accepted by {accepted:?}"
+        );
+        assert!(
+            open_schemas.is_empty(),
+            "Open input schemas: {open_schemas:?}"
+        );
+        assert_eq!(
+            fs::read(
+                temp.path()
+                    .join(".robostickies")
+                    .join(saved["note"]["path"].as_str().unwrap(),)
+            )
+            .unwrap(),
+            original
+        );
+        assert!(
+            !temp
+                .path()
+                .join(".robostickies/tags/unexpected.md")
+                .exists()
+        );
+        assert_eq!(call_mcp(&client, "list_notes", json!({})).await["total"], 1);
+        for name in ["get_config", "validate_store", "rebuild_index"] {
+            let result = client
+                .call_tool(CallToolRequestParams::new(name))
+                .await
+                .unwrap();
+            assert_ne!(result.is_error, Some(true), "{name}: {result:?}");
+        }
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("MCP argument validation test timed out");
+}
+
+#[tokio::test]
 async fn mcp_without_repo_binds_each_process_to_its_startup_git_root() {
     tokio::time::timeout(Duration::from_secs(20), async {
         let temp = tempfile::tempdir().unwrap();

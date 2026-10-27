@@ -24,14 +24,20 @@ pub struct StickyServer {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct NoteId {
     id: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TagName {
     name: String,
 }
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct EmptyInput {}
 
 #[derive(Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -162,20 +168,20 @@ impl StickyServer {
 
     /// Inspect effective TOML configuration, privacy defaults, and their source files.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::config::Configuration>(), annotations(read_only_hint = true, open_world_hint = false))]
-    async fn get_config(&self) -> CallToolResult {
+    async fn get_config(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
         self.execute(|store| store.configuration()).await
     }
 
     /// Diagnose invalid sources, unresolved tags, and Git tracking/exclusion problems.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Health>(), annotations(read_only_hint = true, open_world_hint = false))]
-    async fn validate_store(&self) -> CallToolResult {
+    async fn validate_store(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
         self.execute(|store| store.doctor()).await
     }
 
     /// Rebuild the disposable Rust-native redb index from current Markdown sources.
     /// Source files and Git history remain intact.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Health>(), annotations(destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
-    async fn rebuild_index(&self) -> CallToolResult {
+    async fn rebuild_index(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
         self.execute(|store| store.reindex()).await
     }
 }
