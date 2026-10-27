@@ -169,27 +169,43 @@ selected visibility prevent a complete review until corrected.
 
 ## MCP and agent orientation
 
-Start the server with:
+Install the binary, then run `robostickies init` in the target repository.
+Start the server from the directory the agent is working in:
 
 ```sh
-robostickies --repo /absolute/path/to/repository mcp
+robostickies mcp
 ```
 
-Install the binary first and initialize the target repository with `robostickies
-init`. The binary must be on the client's PATH; use its absolute path if needed.
+Directory selection happens once. The process uses the Git root containing its
+startup working directory, or that directory outside Git. The client controls
+the launch directory, which should be the agent's repository or CWD.
+Use `--repo DIR` to override selection; relative paths resolve from the startup
+working directory. Start a separate process for each repository.
+
+The binary must be on the client's PATH.
 
 ### Codex
 
-Add this to the target repository's `.codex/config.toml`:
+Register the server with the Codex CLI:
+
+```sh
+codex mcp add robostickies -- robostickies mcp
+codex mcp list
+```
+
+This reusable user-level configuration lets each launched server process
+discover its repository from its working directory. Start Codex in the repository
+and use `/mcp` to check the connection.
+
+For project-scoped setup, put the equivalent entry in `.codex/config.toml`:
 
 ```toml
 [mcp_servers.robostickies]
 command = "robostickies"
-args = ["--repo", "/absolute/path/to/repository", "mcp"]
+args = ["mcp"]
 ```
 
-Start Codex in that repository and use `/mcp` to check the connection. Project
-configuration loads for trusted projects. See the
+Project configuration loads for trusted projects. See the
 [Codex MCP documentation](https://developers.openai.com/codex/mcp/).
 
 ### Claude Code
@@ -197,13 +213,12 @@ configuration loads for trusted projects. See the
 From the target repository, register the server with local scope:
 
 ```sh
-claude mcp add --transport stdio --scope local robostickies -- \
-  robostickies --repo /absolute/path/to/repository mcp
+claude mcp add --transport stdio --scope local robostickies -- robostickies mcp
 claude mcp list
 ```
 
-Start Claude Code and use `/mcp` to check the connection. Local scope keeps the
-registration specific to that project and user. See the
+Start Claude Code there and use `/mcp` to check the connection. Local scope keeps
+the registration specific to that project and user. See the
 [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
 
 ### Using the server

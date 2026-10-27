@@ -31,6 +31,11 @@ const GUIDE: &str = r#"# Robostickies
 At the start of work, read the tag catalog and the full guidance for tags marked
 `read_on_start`. Use `robostickies context` or the MCP `get_context` tool.
 
+Launch `robostickies mcp` from the agent's repository or working directory.
+The process selects the containing Git root, or its working directory outside
+Git, and keeps that selection for its lifetime. Use `--repo DIR` for an explicit
+override; relative paths resolve from the startup working directory.
+
 Record brief, concrete observations while working, then continue your task:
 
 - `papercut`: friction, misleading guidance, broken tools, or avoidable rework.

@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io::Write,
     path::Path,
     process::{Command, Stdio},
@@ -6,8 +7,9 @@ use std::{
 };
 
 use rmcp::{
-    ServiceExt,
+    RoleClient, ServiceExt,
     model::{CallToolRequestParams, ReadResourceRequestParams},
+    service::RunningService,
     transport::TokioChildProcess,
 };
 use serde_json::{Value, json};
@@ -21,6 +23,41 @@ fn command(repo: &Path) -> Command {
         "--json",
     ]);
     command
+}
+
+fn init_git(directory: &Path) {
+    let output = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+async fn start_mcp(directory: &Path) -> RunningService<RoleClient, ()> {
+    let mut process = tokio::process::Command::new(env!("CARGO_BIN_EXE_robostickies"));
+    process
+        .args(["--no-user-config", "mcp"])
+        .current_dir(directory);
+    ().serve(TokioChildProcess::new(process).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn call_mcp(client: &RunningService<RoleClient, ()>, name: &str, arguments: Value) -> Value {
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new(name.to_owned())
+                .with_arguments(arguments.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    result.structured_content.unwrap()
 }
 
 fn cli(repo: &Path, args: &[&str]) -> Value {
@@ -150,4 +187,112 @@ async fn real_stdio_mcp_discovery_mutation_errors_and_cli_interoperation() {
         assert_eq!(unknown_field.is_error, Some(true));
         client.cancel().await.unwrap();
     }).await.expect("MCP integration test timed out");
+}
+
+#[tokio::test]
+async fn mcp_without_repo_binds_each_process_to_its_startup_git_root() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("first");
+        let second_root = temp.path().join("second");
+        let first_cwd = first_root.join("nested");
+        let second_cwd = second_root.join("src");
+        fs::create_dir_all(&first_cwd).unwrap();
+        fs::create_dir_all(&second_cwd).unwrap();
+        init_git(&first_root);
+        init_git(&second_root);
+
+        let first = start_mcp(&first_cwd).await;
+        let second = start_mcp(&second_cwd).await;
+        call_mcp(&first, "init_store", json!({})).await;
+        call_mcp(&second, "init_store", json!({})).await;
+        assert!(first_root.join(".robostickies/config.toml").is_file());
+        assert!(second_root.join(".robostickies/config.toml").is_file());
+
+        init_git(&first_cwd);
+        let saved = call_mcp(
+            &first,
+            "create_note",
+            json!({"body": "First repository observation"}),
+        )
+        .await;
+        assert!(
+            first_root
+                .join(".robostickies")
+                .join(saved["note"]["path"].as_str().unwrap())
+                .is_file()
+        );
+        assert!(!first_cwd.join(".robostickies").exists());
+        assert!(!second_cwd.join(".robostickies").exists());
+
+        call_mcp(
+            &second,
+            "create_note",
+            json!({"body": "Second repository observation"}),
+        )
+        .await;
+        let first_notes = call_mcp(&first, "list_notes", json!({})).await;
+        let second_notes = call_mcp(&second, "list_notes", json!({})).await;
+        assert_eq!(first_notes["total"], 1);
+        assert_eq!(second_notes["total"], 1);
+        assert_eq!(
+            first_notes["notes"][0]["body"].as_str().unwrap().trim(),
+            "First repository observation"
+        );
+        assert_eq!(
+            second_notes["notes"][0]["body"].as_str().unwrap().trim(),
+            "Second repository observation"
+        );
+        first.cancel().await.unwrap();
+        second.cancel().await.unwrap();
+    })
+    .await
+    .expect("MCP directory binding test timed out");
+}
+
+#[tokio::test]
+async fn mcp_without_repo_uses_its_startup_cwd_outside_git() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("plain-directory");
+        fs::create_dir(&cwd).unwrap();
+        let client = start_mcp(&cwd).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let saved = call_mcp(
+            &client,
+            "create_note",
+            json!({"body": "A note outside Git"}),
+        )
+        .await;
+        assert!(cwd.join(".robostickies/config.toml").is_file());
+        assert!(
+            cwd.join(".robostickies")
+                .join(saved["note"]["path"].as_str().unwrap())
+                .is_file()
+        );
+        assert!(!temp.path().join(".robostickies").exists());
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("MCP CWD fallback test timed out");
+}
+
+#[test]
+fn explicit_relative_repo_overrides_git_discovery() {
+    let temp = tempfile::tempdir().unwrap();
+    init_git(temp.path());
+    let selected = temp.path().join("selected");
+    fs::create_dir(&selected).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_robostickies"))
+        .args(["--no-user-config", "--repo", "selected", "init"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(selected.join(".robostickies/config.toml").is_file());
+    assert!(!temp.path().join(".robostickies").exists());
 }

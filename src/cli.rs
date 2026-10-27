@@ -14,7 +14,8 @@ use crate::{Store, model::*};
 #[derive(Debug, Parser)]
 #[command(version, about, arg_required_else_help = true)]
 pub struct Cli {
-    /// Repository root; otherwise discover the Git root from the current directory.
+    /// Directory override; defaults to the Git root containing the startup CWD,
+    /// or that CWD outside Git.
     #[arg(long, global = true)]
     repo: Option<PathBuf>,
     /// Emit structured JSON instead of human-readable output.
