@@ -5,6 +5,14 @@ Markdown files are authoritative; the redb index is disposable and ignored by
 Git. Keep private definitions and notes in their separate `private/` namespace.
 Public review must never include private notes, tags, counts, or diagnostics.
 
+## Session orientation
+
+At the start of work, run `robostickies context` or call MCP `get_context`.
+Read tag topics and the full guidance for startup tags, and confirm the selected
+repository in local context. Record concrete friction with `papercut` and useful
+successes with `paperclip` while continuing the task. Publish a sanitized public
+copy of a private observation before promoting it into tracked guidance.
+
 ## Rust CLI conventions
 
 - Use `clap` derive for parsing and retain a `CommandFactory::debug_assert()`
@@ -26,3 +34,7 @@ Public review must never include private notes, tags, counts, or diagnostics.
 Maintain this file according to the [AGENTS.md standard](https://agents.md/).
 Keep guidance portable across agent clients and preserve the format of existing
 agent instructions when implementing opt-in integration in other repositories.
+Maintain project-local skills under `.agents/skills/` according to the
+[Agent Skills specification](https://agentskills.io/specification). For live MCP
+testing, use [self-drive-testing](.agents/skills/self-drive-testing/SKILL.md).
+For changes under `src/`, follow [src/AGENTS.md](src/AGENTS.md).

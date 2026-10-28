@@ -111,8 +111,8 @@ fn initialization_is_idempotent_and_agent_integration_preserves_format() {
         updated
     );
     let context = store.context(Scope::All).unwrap();
-    assert_eq!(context.startup_tags.len(), 2);
-    assert_eq!(context.tags.len(), 2);
+    assert_eq!(context.startup_tags.len(), 4);
+    assert_eq!(context.tags.len(), 4);
     assert!(context.configuration.is_some());
 }
 
@@ -409,7 +409,7 @@ fn public_queries_exclude_private_content_topics_counts_and_diagnostics() {
             .unwrap()
             .contains("secret-topic")
     );
-    assert_eq!(store.list_tags(Scope::Public, None).unwrap().tags.len(), 2);
+    assert_eq!(store.list_tags(Scope::Public, None).unwrap().tags.len(), 4);
     assert!(!store.doctor().unwrap().healthy);
 }
 
@@ -850,11 +850,137 @@ fn user_privacy_defaults_apply_to_initial_tag_definitions() {
     store.init(InitOptions::default()).unwrap();
     assert!(store.directory().join("private/tags/papercut.md").exists());
     assert!(!store.directory().join("tags/papercut.md").exists());
-    assert_eq!(store.context(Scope::All).unwrap().startup_tags.len(), 2);
+    assert_eq!(store.context(Scope::All).unwrap().startup_tags.len(), 4);
     assert_eq!(
         store.get_tag("private:papercut").unwrap().visibility,
         Visibility::Private
     );
+}
+
+#[test]
+fn initialization_backfills_outcome_definitions_without_overwriting_customizations() {
+    for config in [
+        "[tags]\ndefault_private = false\n",
+        "[tags]\ndefault_private = true\n",
+        "[tags]\nprivate_patterns = ['resolved', 'adopted']\n",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let user = temp.path().join("user.toml");
+        fs::write(&user, config).unwrap();
+        let store = Store::with_user_config(temp.path(), Some(user)).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        let private = config.contains("true") || config.contains("private_patterns");
+        let prefix = if private { "private:" } else { "" };
+        for name in ["resolved", "adopted"] {
+            let definition = store.get_tag(&format!("{prefix}{name}")).unwrap();
+            assert!(definition.read_on_start);
+            assert!(!definition.topic.is_empty());
+            assert!(!definition.body.is_empty());
+            assert_eq!(definition.visibility == Visibility::Private, private);
+        }
+        // Model an older store with no outcome definitions, then one customized definition.
+        let namespace = if private { "private/tags" } else { "tags" };
+        for name in ["resolved", "adopted"] {
+            fs::remove_file(store.directory().join(format!("{namespace}/{name}.md"))).unwrap();
+        }
+        let custom = "---\ntopic: Team-specific resolution\nread_on_start: false\n---\nKeep this custom guidance.\n";
+        // The definition in either namespace prevents init from adding the same bare name.
+        let custom_path = store.directory().join("tags/resolved.md");
+        fs::write(&custom_path, custom).unwrap();
+        let result = store.init(InitOptions::default()).unwrap();
+        assert_eq!(
+            result.created,
+            [format!(".robostickies/{namespace}/adopted.md")]
+        );
+        assert_eq!(fs::read_to_string(&custom_path).unwrap(), custom);
+        assert_eq!(
+            store.get_tag("resolved").unwrap().body,
+            "Keep this custom guidance.\n"
+        );
+        assert_eq!(
+            store
+                .list_tags(Scope::All, Some("resolved"))
+                .unwrap()
+                .tags
+                .len(),
+            1
+        );
+        let adopted_path = store.directory().join(format!("{namespace}/adopted.md"));
+        let adopted = fs::read(&adopted_path).unwrap();
+        assert!(
+            store
+                .init(InitOptions::default())
+                .unwrap()
+                .created
+                .is_empty()
+        );
+        assert_eq!(fs::read(adopted_path).unwrap(), adopted);
+    }
+}
+
+#[test]
+fn outcome_tags_preserve_visibility_and_survive_edits_and_archiving() {
+    let (_temp, store) = fresh();
+    // Existing notes must keep their namespace even if tag privacy defaults change.
+    let public = note(&store, "Public defect", &["papercut"]);
+    let private = store
+        .create_note(CreateNote {
+            body: "Local reusable guidance".into(),
+            tags: vec!["paperclip".into()],
+            private: Some(true),
+        })
+        .unwrap()
+        .note;
+    fs::remove_file(store.directory().join("tags/resolved.md")).unwrap();
+    fs::remove_file(store.directory().join("tags/adopted.md")).unwrap();
+    fs::write(
+        store.directory().join("private/config.toml"),
+        "[tags]\ndefault_private = true\n",
+    )
+    .unwrap();
+    // Use the existing tag API with an explicit namespace when a definition is missing.
+    tag(&store, "resolved", false);
+    tag(&store, "adopted", true);
+    for (source, outcome) in [(public, "resolved"), (private, "private:adopted")] {
+        let mut tags = source.tags.clone();
+        tags.push(outcome.into());
+        let applied = store
+            .update_note(UpdateNote {
+                id: source.id.clone(),
+                tags: Some(tags),
+                expected_revision: Some(source.revision),
+                ..UpdateNote::default()
+            })
+            .unwrap()
+            .note;
+        assert_eq!(applied.visibility, source.visibility);
+        assert_eq!(applied.path, source.path);
+        let archived = store
+            .update_note(UpdateNote {
+                id: source.id.clone(),
+                body: Some("Evidence and guidance destination recorded".into()),
+                status: Some(NoteStatus::Archived),
+                expected_revision: Some(applied.revision),
+                ..UpdateNote::default()
+            })
+            .unwrap()
+            .note;
+        let read = store.get_note(&source.id).unwrap();
+        assert_eq!(read.tags, applied.tags);
+        assert_eq!(read.status, NoteStatus::Archived);
+        assert_eq!(read.visibility, source.visibility);
+        assert_eq!(read.revision, archived.revision);
+        let review = store
+            .review(Query {
+                scope: Some(Scope::All),
+                status: StatusFilter::Archived,
+                tags: vec![outcome.into()],
+                ..Query::default()
+            })
+            .unwrap();
+        assert_eq!(review.total, 1);
+        assert_eq!(review.notes[0].id, source.id);
+    }
 }
 
 #[test]

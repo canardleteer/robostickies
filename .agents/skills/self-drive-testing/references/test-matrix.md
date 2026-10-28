@@ -14,14 +14,15 @@ list of owned IDs because clearing tags is part of the lifecycle checks.
 
 | Surface | Cases and expected behavior |
 | --- | --- |
-| `get_context` | Works before init; returns short topics and full startup bodies after init; public scope omits private tags and personal config |
-| `init_store` | Creates files in this checkout; repeat call preserves sources; leaves root agent instructions alone by default |
+| `get_context` | Works before init; local all/private scopes include the canonical repository root; returns short topics and full startup bodies after init; public scope omits the root field, private tags, and personal config |
+| `init_store` | Creates files in this checkout; adds missing outcome definitions in new/existing stores under current privacy defaults; repeat call preserves customized definitions; leaves root agent instructions alone by default |
 | `create_tag`, `get_tag`, `list_tags` | Short topics; full bodies; startup flag; case-insensitive topic/name search; public/private definitions with the same bare name |
 | `get_config` | Effective defaults and source paths match the files used by this process |
 | `create_note`, `get_note` | Untagged and multiple tags; required UUID; returned path matches disk; private tags route locally; explicit public conflict is rejected |
 | `update_note` | Omitted fields stay intact; empty tag list clears tags; latest revision succeeds; stale revision fails; archive/restore affects queries |
 | `list_notes` | Literal case-insensitive body search; AND tags; exclusions; all scopes/statuses; newest-first order; date boundaries; pagination without duplicates |
-| `review_notes` | Public by default; complete despite small page size; deterministic Markdown; rejects cursor; private content/counts/diagnostics are absent |
+| `review_notes` | Public/active by default; schema omits paging; rejects limit/cursor; filters work across multiple internal pages; deterministic Markdown; private content/counts/diagnostics are absent |
+| Outcome lifecycle | Retain papercut/paperclip and visibility; resolved requires affected-environment verification; adopted requires reviewed scoped guidance and a recorded destination; edits and archive/read retain outcome tags; archived-tag queries find history |
 | `publish_note` | Dry run writes no source; actual copy has a new ID; original remains; private tags and extra metadata disappear; supplied body is retained |
 | `validate_store`, `rebuild_index` | Healthy sources produce a healthy report; rebuild leaves Markdown unchanged |
 | Resources | Read `robostickies://context`, `robostickies://guidance`, `robostickies://tags`, `robostickies://config` as JSON before and after init; compare with corresponding tools |
@@ -40,15 +41,17 @@ processes bound to temporary directories; inspect actual responses and files.
 | Area | Cases and expected behavior |
 | --- | --- |
 | Configuration | Isolated user file; shared/user/private precedence; privacy patterns; explicit tag visibility override; malformed configuration |
-| Sources | Manual edits refresh search and topics; deletions disappear; metadata/comments survive edits; duplicate IDs and unresolved tags are diagnosed |
+| Sources | Manual edits refresh search and topics; deletions disappear; nested metadata/comments survive MCP edits of CRLF input; stale revisions fail; duplicate IDs and unresolved tags are diagnosed |
 | Privacy | Malformed private sources and misplaced private-tagged notes do not enter public output; malformed public sources prevent an incomplete review |
-| Cache | Missing/corrupt/incompatible index rebuilds from Markdown; failed cache is disposable; cache failure after a save returns its ID with warnings |
+| Cache | A running MCP server rebuilds missing/corrupt/incompatible indexes from Markdown; failed cache is disposable; cache failure after a save returns its ID with warnings; edits also remain successful |
 | Concurrency | CLI writes while MCP stays alive; concurrent writers lose no notes; stale edits are rejected |
 | Repository | Nested startup CWD selects Git root; non-Git CWD works; explicit relative root overrides discovery; selection stays fixed per process |
 | Integration | Optional agent paragraph preserves existing content and is idempotent; store/local ignore modes work, including linked worktrees |
 | Filesystem | Invalid paths and symlinks cannot escape; missing private/cache exclusions prevent unsafe writes; tracked private/cache paths are reported |
 
 Existing tests in `tests/store.rs` and `tests/interfaces.rs` cover these boundaries.
+They run under ordinary `cargo test` with Cargo's built binary and isolated
+stores; no installed binary, temporary runner, or existing notes are required.
 Run targeted regressions for fixes, then the full required checks. Record an
 automated pass as automated coverage, even when the same feature also passed
 through a live connection.

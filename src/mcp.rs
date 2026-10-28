@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Store,
-    model::{CreateNote, CreateTag, InitOptions, PublishNote, Query, Scope, UpdateNote},
+    model::{
+        CreateNote, CreateTag, InitOptions, PublishNote, Query, ReviewQuery, Scope, UpdateNote,
+    },
     store::DISCOVERY_GUIDANCE,
 };
 
@@ -130,10 +132,10 @@ impl StickyServer {
 
     /// Prepare complete deterministic review material for summarization. Visibility
     /// defaults to public; private notes must be published first for public review.
-    /// Explicit scope=private or all prepares a local review. Cursor is not accepted.
+    /// Explicit scope=private or all prepares a local review. Paging is internal.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Review>(), annotations(read_only_hint = true, open_world_hint = false))]
-    async fn review_notes(&self, Parameters(input): Parameters<Query>) -> CallToolResult {
-        self.execute(move |store| store.review(input)).await
+    async fn review_notes(&self, Parameters(input): Parameters<ReviewQuery>) -> CallToolResult {
+        self.execute(move |store| store.review(input.into())).await
     }
 
     /// Define a tag using a bare filename slug, a short topic, and Markdown guidance.

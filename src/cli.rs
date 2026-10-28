@@ -105,7 +105,7 @@ enum Command {
     /// Produce complete review material; visibility defaults to public.
     Review {
         #[command(flatten)]
-        filters: Filters,
+        filters: ReviewFilters,
         #[arg(long)]
         text: Option<String>,
     },
@@ -227,6 +227,16 @@ impl VisibilityArgs {
 
 #[derive(Debug, Args)]
 struct Filters {
+    #[command(flatten)]
+    review: ReviewFilters,
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+    #[arg(long)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ReviewFilters {
     #[arg(long, value_enum)]
     scope: Option<Scope>,
     /// Require every specified tag.
@@ -242,15 +252,21 @@ struct Filters {
     /// Exclusive creation-date bound (UTC YYYY-MM-DD or RFC3339).
     #[arg(long)]
     until: Option<String>,
-    #[arg(long, default_value_t = 50)]
-    limit: usize,
-    #[arg(long)]
-    cursor: Option<String>,
 }
 
 impl Filters {
     fn query(self, text: Option<String>) -> Query {
         Query {
+            limit: self.limit,
+            cursor: self.cursor,
+            ..self.review.query(text).into()
+        }
+    }
+}
+
+impl ReviewFilters {
+    fn query(self, text: Option<String>) -> ReviewQuery {
+        ReviewQuery {
             scope: self.scope,
             tags: self.tags,
             exclude_tags: self.exclude_tags,
@@ -258,8 +274,6 @@ impl Filters {
             text,
             since: self.since,
             until: self.until,
-            limit: self.limit,
-            cursor: self.cursor,
         }
     }
 }
@@ -367,7 +381,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             format_page,
         ),
         Command::Review { filters, text } => {
-            emit(store.review(filters.query(text))?, json, |review| {
+            emit(store.review(filters.query(text).into())?, json, |review| {
                 review.markdown.clone()
             })
         }
@@ -453,6 +467,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         ),
         Command::Context { scope } => emit(store.context(scope)?, json, |context| {
             let mut text = context.guidance.clone();
+            if let Some(root) = &context.repository_root {
+                text.push_str(&format!("\nRepository: {root}\n"));
+            }
             if !context.initialized {
                 text.push_str("\nNot initialized. Run robostickies init or call init_store.\n");
             }

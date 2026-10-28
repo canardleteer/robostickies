@@ -14,8 +14,9 @@ behavior; keep run-specific results in the local store.
 Call `get_context` first. Read tag topics and full startup guidance, inspect
 configuration, and search existing observations before adding another. If needed,
 call `init_store(agents=false)` and verify its files appear in this checkout.
-Each MCP process keeps its startup repository selection; changing the agent's
-working directory does not retarget it.
+Confirm `repository_root` in local context. Each MCP process keeps its startup
+repository selection; changing the agent's working directory does not retarget
+it. Public context omits the root entirely.
 
 Keep every generated `.robostickies/` file and run result out of commits at this
 development stage. Retain the built-in private/cache exclusions. Add no broader
@@ -60,8 +61,8 @@ material. Use the scoped tools when preparing public output.
 
 Text search matches a case-insensitive literal substring of the body. Tag filters
 require every selected tag; exclusions reject any match. `since` is inclusive and
-`until` exclusive. Keep filters unchanged while following cursors. Review consumes
-all matches even with a small page size and rejects a supplied cursor.
+`until` exclusive. Keep filters unchanged while following list/search cursors.
+Review consumes all matches and accepts neither `limit` nor `cursor`.
 
 ## Turn observations into fixes
 
@@ -74,6 +75,31 @@ Keep synthetic fixtures distinct from findings about this codebase. Archive only
 the fixture IDs owned by the run after their lifecycle tests finish. Leave an
 unverified fix pending rather than archiving its papercut.
 
+After a fix passes in the affected environment, retain `papercut`, add `resolved`,
+record evidence, and archive. MCP fixes require installation, user-confirmed agent
+restart, and checks through the installed connection first. Archived status alone
+does not establish resolution.
+
+For paperclips that warrant permanent instructions, place the reusable guidance
+in the appropriately scoped AGENTS.md and review it. Retain `paperclip`, add
+`adopted`, record the destination, and archive. Publish a sanitized public copy of
+a private observation before promoting it into tracked guidance. Keep other
+useful paperclips active without `adopted`.
+
+Use existing tag/update APIs. Retain all existing tags and visibility; updates
+replace the tag set. If an outcome definition is missing, create it explicitly
+in the appropriate namespace. Public notes need a public definition even if
+privacy defaults favor private tags. Private notes can use either namespace.
+Repeat initialization to add missing predefined definitions without overwriting
+custom guidance; initialization honors privacy defaults.
+
+Find outcome history with `review_notes` and
+`{"status":"archived","tags":["resolved"]}` or
+`{"status":"archived","tags":["adopted"]}`. CLI equivalents are
+`review --status archived --tag resolved` and
+`review --status archived --tag adopted`. Select `scope` and qualified tag names
+explicitly for private history.
+
 Reproduce a defect before changing code. Add a regression test for observable
 behavior and batch related fixes. Review new prose through slop-guard, validate
 the skill, and run the repository quality checks. Before committing, stage
@@ -83,11 +109,18 @@ explicit source or skill paths and inspect the staged changes for generated data
 
 When a change affects MCP, finish the batch and verify it with fresh child
 processes. Save a local checkpoint describing completed cases and the next live
-calls. Run `cargo install --path . --locked --force`, verify the installation,
-and tell the user it is ready.
+calls, source revision/diff, fixture IDs, completed checks, and pending findings.
+Run `cargo install --path . --locked --force` once for the batch, verify the
+installed executable, record its hash, and mark the checkpoint awaiting restart.
+Tell the user installation is ready.
 
 Stop until the user confirms the agent restart.
 
 The existing server process continues running the old binary. After restart,
 rediscover tools and read context. Repeat affected checks through the installed
 connection before recording verification or closing the findings.
+Confirm root selection/public omission, review schema and CLI behavior, then
+initialize idempotently and check outcome topics, startup guidance, and resource
+agreement. Repeat affected workflows and record evidence before applying outcomes.
+If verification fails, keep the findings pending and repeat the fix/install/wait
+cycle. Commit and push only after installed-connection verification passes.

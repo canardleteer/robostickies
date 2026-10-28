@@ -43,7 +43,7 @@ robostickies archive <uuid>
 robostickies unarchive <uuid>
 ```
 
-Both predefined tags are optional. Notes can use multiple defined tags or no
+Predefined tags are optional. Notes can use multiple defined tags or no
 tags. Edit tag guidance directly in its Markdown file. Definitions require a
 short YAML `topic`; `read_on_start: true` includes full guidance in session
 context. Additional frontmatter is retained during note edits, including comments.
@@ -55,7 +55,7 @@ context. Additional frontmatter is retained during note edits, including comment
   config.toml
   README.md
   .gitignore
-  tags/{papercut,paperclip,...}.md
+  tags/{papercut,paperclip,resolved,adopted,...}.md
   notes/<uuid>.md
   private/
     config.toml             # optional repository-local defaults
@@ -161,11 +161,51 @@ ID. Date bounds accept UTC dates or RFC3339 timestamps: `since` is inclusive and
 `until` exclusive. Reuse pagination cursors with the same filters.
 
 Review defaults to public notes and covers all matching notes, without pagination.
+CLI review and MCP `review_notes` reject `limit` and `cursor`; list/search keep
+their paging inputs.
 It emits deterministic Markdown, or structured material with `--json`, for you
 or an agent to summarize. Public review excludes private notes and metadata
 before computing counts or rendering. Publish selected private notes first if
 you want their reviewed content in public material. Invalid sources in the
 selected visibility prevent a complete review until corrected.
+
+## Resolution and adoption
+
+Initialization adds missing `resolved` and `adopted` definitions, including in
+existing stores. It preserves customized definitions and honors tag privacy
+defaults. Both tags provide startup guidance and use the existing tag/update
+commands and APIs.
+
+| Observation | Condition | Action |
+| --- | --- | --- |
+| Papercut | Fix verified in the affected environment | Retain `papercut`, add `resolved`, record evidence, archive |
+| Paperclip for permanent guidance | Guidance exists in the appropriately scoped AGENTS.md and has been reviewed | Retain `paperclip`, add `adopted`, record the destination, archive |
+| Other useful paperclip | Permanent instructions are unwarranted | Keep active without `adopted` |
+
+MCP fixes require installation, an agent restart, and verification through the
+installed connection before resolution. Archived status alone proves no outcome.
+Publish a sanitized public copy of a private observation before promoting it
+into tracked guidance.
+
+Updates replace the entire tag set, so retain the original tags when adding an
+outcome. Preserve the note's visibility: use a public outcome definition for a
+public note; a private note can use public or private definitions. If the needed
+definition is missing, create it with an explicit `--public`/`--private` or MCP
+`private` value to override current defaults. Adding a private tag moves a public
+note into private storage.
+
+```sh
+robostickies update <uuid> "Observation and verification evidence" --tag papercut --tag resolved --if-match <revision>
+robostickies archive <uuid>
+robostickies review --status archived --tag resolved
+robostickies review --status archived --tag adopted
+```
+
+In MCP, use `update_note` with the retained tags plus the outcome and
+`status: "archived"`. Query history with `review_notes` using
+`{"status":"archived","tags":["resolved"]}` or
+`{"status":"archived","tags":["adopted"]}`. Public/active defaults still apply;
+select `scope` and qualified tag names explicitly for private history.
 
 ## MCP and agent orientation
 
@@ -226,6 +266,9 @@ the registration specific to that project and user. See the
 Discovery includes brief startup instructions even before initialization. Agents
 should call `get_context` to read topics, full startup guidance, capabilities,
 and an optional AGENTS.md paragraph. Use `init_store` to scaffold through MCP.
+Local all/private context includes the canonical `repository_root` before and
+after initialization. The CLI displays it too. Public context omits the field
+entirely, along with personal configuration.
 
 | MCP tools | Purpose |
 | --- | --- |
@@ -247,6 +290,8 @@ Resources `robostickies://context`, `robostickies://guidance`,
 `robostickies://tags`, and `robostickies://config` offer read access as well.
 The server binds to one repository and logs exclusively to stderr. Set `RUST_LOG`
 to adjust diagnostics. No HTTP transport is exposed.
+The context resource includes the local repository root and matches unscoped
+`get_context`; use the scoped tool for public output.
 
 `init --agents` optionally appends a small managed pointer to `AGENTS.md`; it
 preserves other content and is idempotent. You can instead obtain the paragraph
@@ -265,6 +310,13 @@ The library shares all operations between CLI and MCP. Operation-scoped locking
 allows multiple CLI processes and MCP servers to use the same store. Atomic
 writes preserve source files; saved notes still return their ID if index refresh
 fails. `reindex` regenerates the cache, and `doctor` diagnoses source problems.
+
+Integration tests start fresh stdio servers from Cargo's built binary and use
+isolated stores. A clean checkout needs no installed executable, temporary
+runner, or existing notes. They cover resources, recovery, concurrent CLI writes,
+frontmatter/publication, context selection, and complete review across pages.
+Live installed-connection checks remain necessary after MCP changes; follow the
+[self-drive-testing skill](.agents/skills/self-drive-testing/SKILL.md).
 
 CLI errors use `invalid_input`, `invalid_document`, `not_found`, `not_initialized`,
 `conflict`, `privacy`, `configuration`, `busy`, `io`, `index`, or `internal` codes.

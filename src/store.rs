@@ -44,6 +44,24 @@ Record brief, concrete observations while working, then continue your task:
   what worked and when to reuse it; routine success usually needs no note.
 - Use any defined tags together, or leave a general note untagged.
 
+For a verified fix, retain `papercut`, add `resolved`, record verification
+evidence, and archive. Verify in the affected environment; MCP fixes require
+installation and an agent restart followed by checks through the installed
+connection. Archived status alone does not prove resolution.
+
+For reusable guidance, retain `paperclip`, add `adopted` after the guidance exists
+in the appropriately scoped AGENTS.md and has been reviewed, record its destination,
+and archive. Publish a sanitized public copy of a private observation before
+promoting it into tracked guidance. Keep other useful paperclips active without
+`adopted`. Read the outcome tag's full guidance before applying it.
+
+Outcome tags use the ordinary tag and update APIs. Retain the existing tags and
+visibility. If a definition is missing, create it explicitly in the appropriate
+namespace: a public definition for a public note, or a public/private definition
+for a private note. A private outcome tag would move a public note into private
+storage. Initialization adds missing predefined definitions without overwriting
+custom guidance and honors tag privacy defaults.
+
 Discover tags with `tags list` / `list_tags` and read details with `tags get` /
 `get_tag`. Define tags in `tags/<name>.md`, using YAML `topic` and optionally
 `read_on_start`, followed by Markdown guidance. Create them with `tags create` /
@@ -69,6 +87,11 @@ YYYY-MM-DD or RFC3339; `since` is inclusive and `until` is exclusive.
 Review defaults to public notes. Local review can explicitly include private or
 all notes. To include a private observation in public review, publish it first.
 Review is deterministic material for you or an agent to summarize.
+Review inputs have no limit or cursor; list/search retain pagination.
+Find verified history with `review --status archived --tag resolved` or
+`review --status archived --tag adopted`. In MCP use `review_notes` with
+`status: "archived"` and `tags: ["resolved"]` or `["adopted"]`. Select scope and
+qualified tag names explicitly for local private history.
 
 Use `get_config` / `config show` to inspect effective configuration and sources.
 User defaults come from the platform config directory's `robostickies.toml`.
@@ -93,6 +116,9 @@ pub struct Store {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Context {
     pub initialized: bool,
+    /// Canonical root selected when the handle was constructed. Omitted in public context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_root: Option<String>,
     pub guidance: String,
     pub agents_md: String,
     pub tags: Vec<TagSummary>,
@@ -483,6 +509,16 @@ impl Store {
                 "What works well and is worth reusing.",
                 "Record what saved time or produced a useful result, the circumstances, and how to reuse it. Prefer concrete value over routine success or generic praise.\n",
             ),
+            (
+                "resolved",
+                "Fixes verified in the affected environment.",
+                "Keep the papercut tag, add resolved after verifying the fix in its affected environment, record evidence, then archive. For MCP fixes, install the binary and wait for the user's agent restart before verifying through the installed connection. Archived status alone does not prove resolution. Preserve the note's visibility when selecting or creating an outcome definition.\n",
+            ),
+            (
+                "adopted",
+                "Reusable guidance reviewed in scoped agent instructions.",
+                "Keep the paperclip tag, add adopted after reusable guidance exists in the appropriately scoped AGENTS.md and has been reviewed, record its destination, then archive. Publish a sanitized public copy of a private observation before promoting it into tracked guidance. Keep other useful paperclips active without adopted. Preserve the note's visibility when selecting or creating an outcome definition.\n",
+            ),
         ] {
             if self.checked(format!("tags/{name}.md"))?.exists()
                 || self.checked(format!("private/tags/{name}.md"))?.exists()
@@ -813,6 +849,8 @@ impl Store {
     pub fn context(&self, scope: Scope) -> Result<Context> {
         let mut context = Context {
             initialized: self.initialized(),
+            repository_root: (scope != Scope::Public)
+                .then(|| self.repo.to_string_lossy().into_owned()),
             guidance: GUIDE.into(),
             agents_md: self.agents_snippet(),
             tags: vec![],

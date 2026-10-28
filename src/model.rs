@@ -223,6 +223,40 @@ impl Default for Query {
     }
 }
 
+/// Filters for a complete review. Defaults to active public notes; paging is internal.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReviewQuery {
+    /// Omit to review public notes only.
+    pub scope: Option<Scope>,
+    /// Every listed tag must be attached to the note.
+    pub tags: Vec<String>,
+    /// Exclude notes with any of these tags.
+    pub exclude_tags: Vec<String>,
+    pub status: StatusFilter,
+    /// Case-insensitive literal substring of the note body.
+    pub text: Option<String>,
+    /// Inclusive creation-date bound (UTC date or RFC3339 timestamp).
+    pub since: Option<String>,
+    /// Exclusive creation-date bound (UTC date or RFC3339 timestamp).
+    pub until: Option<String>,
+}
+
+impl From<ReviewQuery> for Query {
+    fn from(review: ReviewQuery) -> Self {
+        Self {
+            scope: review.scope,
+            tags: review.tags,
+            exclude_tags: review.exclude_tags,
+            status: review.status,
+            text: review.text,
+            since: review.since,
+            until: review.until,
+            ..Self::default()
+        }
+    }
+}
+
 /// A page of notes, with the count calculated after all filters.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct NotePage {
