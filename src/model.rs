@@ -287,8 +287,8 @@ pub struct UpdateNote {
     pub status: Option<NoteStatus>,
     /// True moves a public note into private storage. Publishing is separate.
     pub private: Option<bool>,
-    /// Reject the edit if the source changed since it was read.
-    pub expected_revision: Option<String>,
+    /// Required last-read revision. A stale value rejects the edit without changing sources.
+    pub expected_revision: String,
 }
 
 /// Define a tag. `name` is an unqualified filename slug.
@@ -315,7 +315,8 @@ pub struct PublishNote {
     pub body: Option<String>,
     /// Replace the public tag set. Private tags are always removed or rejected.
     pub tags: Option<Vec<String>>,
-    pub expected_revision: Option<String>,
+    /// Required last-read source revision, including for previews.
+    pub expected_revision: String,
 }
 
 /// A saved note remains successful even if refreshing the disposable index fails.

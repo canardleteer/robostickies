@@ -39,8 +39,8 @@ robostickies tags list
 robostickies tags get tooling
 robostickies add "The build helper avoids repeated environment setup" --tag paperclip --tag tooling
 robostickies update <uuid> "Corrected observation" --if-match <revision>
-robostickies archive <uuid>
-robostickies unarchive <uuid>
+robostickies archive <uuid> --if-match <revision-returned-by-update>
+robostickies unarchive <uuid> --if-match <revision-returned-by-archive>
 ```
 
 Predefined tags are optional. Notes can use multiple defined tags or no
@@ -98,8 +98,9 @@ robostickies tags create personal --topic "Local observations" --private
 robostickies add "An observation for local use" --tag papercut --tag private:personal
 robostickies add "Another local note" --private
 robostickies list --scope private
-robostickies publish <uuid> --dry-run
-robostickies publish <uuid> "Reviewed public wording"
+robostickies get <uuid>
+robostickies publish <uuid> --dry-run --if-match <revision>
+robostickies publish <uuid> "Reviewed public wording" --if-match <revision>
 ```
 
 Private tags always have explicit `private:<name>` identities. A shared tag
@@ -111,7 +112,8 @@ public content remains in Git history.
 `publish` immediately creates a new public copy and keeps the private original.
 Use `--dry-run` for a preview. The copy drops private tags and additional metadata,
 and accepts replacement body text and public `--tag` values. `--clear-tags`
-publishes an untagged copy. `--if-match` rejects a changed source. Review the
+publishes an untagged copy. Both preview and copy require `--if-match`; a preview
+does not change the source revision. A changed source is rejected. Review the
 prose you choose to publish; publishing does not redact the supplied text.
 
 By default, `.robostickies/.gitignore` excludes `private/` and `cache/`. To use
@@ -169,6 +171,34 @@ before computing counts or rendering. Publish selected private notes first if
 you want their reviewed content in public material. Invalid sources in the
 selected visibility prevent a complete review until corrected.
 
+Duplicate IDs across public/private files do not change public list/review:
+the public copy remains visible and conflict details stay local. Local diagnostics
+report the duplicate, local reviews fail, and ID-based reads/edits/publications
+reject the ambiguity. Repair the copied file's UUID and filename manually.
+Cache recovery never rewrites the authoritative sources.
+
+## Shared editing
+
+Edits, archive/unarchive, and publishing (including previews) require the last-read
+revision: CLI `--if-match` or MCP `expected_revision`. This is a breaking change
+from the earlier optional guards. Missing/null revisions fail parsing; blank
+revisions return `invalid_input`; stale revisions return `conflict` without
+changing sources. Reads and saves return the revision to use for the next action.
+There is no force override or automatic merge. After a conflict, re-read the note
+and reconcile the changes before submitting another edit.
+
+Multiple CLI/MCP clients sharing one OS account on local disk use the same OS
+file lock. The source read, revision check, and write occur under that lock;
+atomic replacement prevents partial files. Independent creations retain unique
+IDs, and competing tag creation never overwrites an existing definition. Lock
+contention waits up to five seconds before returning `busy` (CLI status 75).
+The OS releases locks on process exit; do not delete `cache/store.lock` to recover
+one. Direct editor/Git writes do not participate in this locking contract.
+
+Restart every MCP process sharing the checkout after installing the upgrade.
+An already running process retains its old behavior. The disposable index
+rebuilds older derived data automatically; Markdown files need no migration.
+
 ## Resolution and adoption
 
 Initialization adds missing `resolved` and `adopted` definitions, including in
@@ -196,7 +226,7 @@ note into private storage.
 
 ```sh
 robostickies update <uuid> "Observation and verification evidence" --tag papercut --tag resolved --if-match <revision>
-robostickies archive <uuid>
+robostickies archive <uuid> --if-match <revision-returned-by-update>
 robostickies review --status archived --tag resolved
 robostickies review --status archived --tag adopted
 ```
@@ -282,7 +312,7 @@ entirely, along with personal configuration.
 
 Creation tools accept `private: true` or `false`; omission uses the relevant
 defaults. Private tag references still force private note storage. `update_note`
-and `publish_note` accept `expected_revision`; get/create/update responses supply
+and `publish_note` require `expected_revision`; get/create/update responses supply
 the current revision. `publish_note` defaults to immediate copying, with
 `dry_run: true` for previews. Tools return structured results and tool errors.
 
@@ -315,6 +345,10 @@ Integration tests start fresh stdio servers from Cargo's built binary and use
 isolated stores. A clean checkout needs no installed executable, temporary
 runner, or existing notes. They cover resources, recovery, concurrent CLI writes,
 frontmatter/publication, context selection, and complete review across pages.
+Test-owned CLI/Git subprocesses use asynchronous I/O with a ten-second deadline
+and bounded kill/reap cleanup. A Rust subprocess fixture exercises timeout and
+lock-release behavior without shell scripts. Shared-edit races use two independent
+MCP servers and CLI writers against the same isolated store.
 Live installed-connection checks remain necessary after MCP changes; follow the
 [self-drive-testing skill](.agents/skills/self-drive-testing/SKILL.md).
 

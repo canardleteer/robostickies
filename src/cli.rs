@@ -73,21 +73,23 @@ enum Command {
         status: Option<NoteStatus>,
         #[command(flatten)]
         visibility: VisibilityArgs,
-        /// Refuse the update unless this revision is still current.
+        /// Required last-read revision; re-read and reconcile after a conflict.
         #[arg(long)]
-        if_match: Option<String>,
+        if_match: String,
     },
     /// Archive a resolved or obsolete note.
     Archive {
         id: String,
+        /// Required last-read revision.
         #[arg(long)]
-        if_match: Option<String>,
+        if_match: String,
     },
     /// Restore an archived note to active status.
     Unarchive {
         id: String,
+        /// Required last-read revision.
         #[arg(long)]
-        if_match: Option<String>,
+        if_match: String,
     },
     /// Browse notes with optional filters.
     List {
@@ -126,8 +128,9 @@ enum Command {
         tags: Vec<String>,
         #[arg(long)]
         clear_tags: bool,
+        /// Required source revision, including for --dry-run.
         #[arg(long)]
-        if_match: Option<String>,
+        if_match: String,
     },
     /// Read session guidance, tag topics, startup details, and an AGENTS.md snippet.
     Context {

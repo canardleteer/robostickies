@@ -43,8 +43,11 @@ schema errors may be text-only. Successful results use `structuredContent`.
 Creation and update return `note` inside an envelope, while `get_note` returns the
 note itself. Inspect Markdown to verify paths and frontmatter.
 
-Use the revision from the latest successful read or edit for
-`expected_revision`. Re-read after a conflict. A save with cache warnings still
+Edits and publication, including previews, require `expected_revision` from the
+latest successful read or save; CLI update/archive/unarchive/publish require
+`--if-match`. There is no force override. On conflict, re-read and reconcile;
+never attach a newly fetched revision to an unreviewed stale replacement.
+A save with cache warnings still
 created a note: retain its ID and repair the cache before retrying discovery.
 Repeating creation would make a duplicate.
 
@@ -63,6 +66,13 @@ Text search matches a case-insensitive literal substring of the body. Tag filter
 require every selected tag; exclusions reject any match. `since` is inclusive and
 `until` exclusive. Keep filters unchanged while following list/search cursors.
 Review consumes all matches and accepts neither `limit` nor `cursor`.
+
+Use separate MCP processes and CLI writers to test the shared operation lock.
+Writers using one last-read revision must produce one successful edit and
+`conflict` for the others. Check body, tags, status, visibility, and source paths
+for unintended changes. Use temporary stores for lock contention and duplicate
+IDs. A private duplicate must leave public list/review unchanged while local
+inspection reports the conflict and ambiguous ID-based operations fail.
 
 ## Turn observations into fixes
 
@@ -114,7 +124,8 @@ Run `cargo install --path . --locked --force` once for the batch, verify the
 installed executable, record its hash, and mark the checkpoint awaiting restart.
 Tell the user installation is ready.
 
-Stop until the user confirms the agent restart.
+Stop until the user confirms that every MCP process sharing this checkout has
+restarted.
 
 The existing server process continues running the old binary. After restart,
 rediscover tools and read context. Repeat affected checks through the installed

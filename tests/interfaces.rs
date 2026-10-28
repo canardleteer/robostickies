@@ -1,10 +1,9 @@
-use std::{
-    fs,
-    io::Write,
-    path::Path,
-    process::{Command, Stdio},
-    time::Duration,
-};
+mod support;
+
+use support::CommandOutput;
+use tokio::process::Command;
+
+use std::{fs, path::Path, process::Stdio, time::Duration};
 
 use rmcp::{
     RoleClient, ServiceExt,
@@ -14,6 +13,109 @@ use rmcp::{
 };
 use serde_json::{Value, json};
 
+// Invoked only as a child of the process-runner and lock tests. No shell or
+// installed executable is needed for deterministic failure-path fixtures.
+#[test]
+#[ignore = "subprocess fixture invoked explicitly by integration tests"]
+fn subprocess_fixture() {
+    use std::io::{Read, Write};
+    let mode = std::env::var("ROBOSTICKIES_TEST_MODE").unwrap();
+    let _lock = if mode == "lock" {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(std::env::var_os("ROBOSTICKIES_TEST_LOCK").unwrap())
+            .unwrap();
+        file.lock().unwrap();
+        Some(file)
+    } else {
+        None
+    };
+    println!("ROBOSTICKIES_CHILD_READY");
+    std::io::stdout().flush().unwrap();
+    match mode.as_str() {
+        "hang" | "lock" => loop {
+            std::thread::park();
+        },
+        "echo" => {
+            std::io::stderr()
+                .write_all(&vec![b'E'; 256 * 1024])
+                .unwrap();
+            let mut bytes = vec![];
+            std::io::stdin().read_to_end(&mut bytes).unwrap();
+            std::io::stdout().write_all(&bytes).unwrap();
+        }
+        "exit" => {
+            eprintln!("fixture failure");
+            std::process::exit(7);
+        }
+        _ => panic!("Unknown fixture mode"),
+    }
+}
+
+fn fixture_command(mode: &str) -> Command {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--ignored", "--exact", "subprocess_fixture", "--nocapture"])
+        .env("ROBOSTICKIES_TEST_MODE", mode)
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+async fn wait_ready(child: &mut tokio::process::Child) {
+    use tokio::io::AsyncBufReadExt;
+    tokio::time::timeout(support::PROCESS_TIMEOUT, async {
+        let mut reader = tokio::io::BufReader::new(child.stdout.as_mut().unwrap());
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                reader.read_line(&mut line).await.unwrap(),
+                0,
+                "Child exited before readiness"
+            );
+            if line.trim() == "ROBOSTICKIES_CHILD_READY" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("Subprocess readiness timed out");
+}
+
+#[tokio::test]
+async fn subprocess_deadlines_reap_stalled_children_and_capture_all_streams() {
+    let mut stalled = fixture_command("hang").spawn().unwrap();
+    wait_ready(&mut stalled).await;
+    let error = support::collect(&mut stalled, None, Duration::from_millis(100))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(!stalled.try_wait().unwrap().unwrap().success());
+    let mut echo = fixture_command("echo").spawn().unwrap();
+    let input = vec![b'I'; 256 * 1024];
+    let output = support::collect(&mut echo, Some(&input), support::PROCESS_TIMEOUT)
+        .await
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        output
+            .stdout
+            .windows(input.len())
+            .any(|window| window == input)
+    );
+    assert_eq!(output.stderr, vec![b'E'; 256 * 1024]);
+    let failed = fixture_command("exit").bounded_output().await.unwrap();
+    assert_eq!(failed.status.code(), Some(7));
+    assert!(
+        String::from_utf8(failed.stderr)
+            .unwrap()
+            .contains("fixture failure")
+    );
+}
+
 fn command(repo: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_robostickies"));
     command.args([
@@ -22,14 +124,16 @@ fn command(repo: &Path) -> Command {
         "--no-user-config",
         "--json",
     ]);
+    command.kill_on_drop(true);
     command
 }
 
-fn init_git(directory: &Path) {
+async fn init_git(directory: &Path) {
     let output = Command::new("git")
         .args(["init", "--quiet"])
         .current_dir(directory)
-        .output()
+        .bounded_output()
+        .await
         .unwrap();
     assert!(
         output.status.success(),
@@ -89,8 +193,8 @@ async fn resource_mcp(client: &RunningService<RoleClient, ()>, uri: &str) -> Val
     serde_json::from_str(result["contents"][0]["text"].as_str().unwrap()).unwrap()
 }
 
-fn cli(repo: &Path, args: &[&str]) -> Value {
-    let output = command(repo).args(args).output().unwrap();
+async fn cli(repo: &Path, args: &[&str]) -> Value {
+    let output = command(repo).args(args).bounded_output().await.unwrap();
     assert!(
         output.status.success(),
         "{args:?}: {}",
@@ -99,10 +203,10 @@ fn cli(repo: &Path, args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-#[test]
-fn cli_round_trip_stdin_search_archive_and_publish() {
+#[tokio::test]
+async fn cli_round_trip_stdin_search_archive_and_publish() {
     let temp = tempfile::tempdir().unwrap();
-    cli(temp.path(), &["init"]);
+    cli(temp.path(), &["init"]).await;
     cli(
         temp.path(),
         &[
@@ -113,7 +217,8 @@ fn cli_round_trip_stdin_search_archive_and_publish() {
             "Local observations",
             "--private",
         ],
-    );
+    )
+    .await;
     let mut child = command(temp.path())
         .args(["add", "-", "--tag", "papercut", "--tag", "private:local"])
         .stdin(Stdio::piped())
@@ -121,13 +226,13 @@ fn cli_round_trip_stdin_search_archive_and_publish() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"CLI stdin observation")
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
+    let output = support::collect(
+        &mut child,
+        Some(b"CLI stdin observation"),
+        support::PROCESS_TIMEOUT,
+    )
+    .await
+    .unwrap();
     assert!(
         output.status.success(),
         "{}",
@@ -137,24 +242,61 @@ fn cli_round_trip_stdin_search_archive_and_publish() {
     assert_eq!(saved["note"]["visibility"], "private");
     let id = saved["note"]["id"].as_str().unwrap();
     assert_eq!(
-        cli(temp.path(), &["search", "STDIN", "--scope", "private"])["total"],
+        cli(temp.path(), &["search", "STDIN", "--scope", "private"]).await["total"],
         1
     );
-    assert_eq!(cli(temp.path(), &["review"])["total"], 0);
-    let preview = cli(temp.path(), &["publish", id, "--dry-run"]);
+    assert_eq!(cli(temp.path(), &["review"]).await["total"], 0);
+    let revision = saved["note"]["revision"].as_str().unwrap();
+    let preview = cli(
+        temp.path(),
+        &["publish", id, "--dry-run", "--if-match", revision],
+    )
+    .await;
     assert_eq!(preview["dry_run"], true);
-    assert_eq!(cli(temp.path(), &["list", "--scope", "public"])["total"], 0);
-    let published = cli(temp.path(), &["publish", id, "Reviewed public CLI text"]);
+    assert_eq!(
+        cli(temp.path(), &["list", "--scope", "public"]).await["total"],
+        0
+    );
+    let published = cli(
+        temp.path(),
+        &[
+            "publish",
+            id,
+            "Reviewed public CLI text",
+            "--if-match",
+            revision,
+        ],
+    )
+    .await;
     let public_id = published["note"]["id"].as_str().unwrap();
     assert_eq!(published["note"]["tags"], json!(["papercut"]));
-    cli(temp.path(), &["archive", public_id]);
-    assert_eq!(cli(temp.path(), &["review"])["total"], 0);
-    cli(temp.path(), &["unarchive", public_id]);
-    assert_eq!(cli(temp.path(), &["review"])["total"], 1);
-    assert_eq!(cli(temp.path(), &["doctor"])["healthy"], true);
+    let archived = cli(
+        temp.path(),
+        &[
+            "archive",
+            public_id,
+            "--if-match",
+            published["note"]["revision"].as_str().unwrap(),
+        ],
+    )
+    .await;
+    assert_eq!(cli(temp.path(), &["review"]).await["total"], 0);
+    cli(
+        temp.path(),
+        &[
+            "unarchive",
+            public_id,
+            "--if-match",
+            archived["note"]["revision"].as_str().unwrap(),
+        ],
+    )
+    .await;
+    assert_eq!(cli(temp.path(), &["review"]).await["total"], 1);
+    assert_eq!(cli(temp.path(), &["doctor"]).await["healthy"], true);
     let invalid = command(temp.path())
         .args(["get", "../../escape"])
-        .output()
+        .bounded_output()
+        .await
         .unwrap();
     assert_eq!(invalid.status.code(), Some(65));
     assert!(invalid.stdout.is_empty());
@@ -169,7 +311,7 @@ async fn real_stdio_mcp_discovery_mutation_errors_and_cli_interoperation() {
     tokio::time::timeout(Duration::from_secs(40), async {
         let temp = tempfile::tempdir().unwrap();
         let mut process = tokio::process::Command::new(env!("CARGO_BIN_EXE_robostickies"));
-        process.args(["--repo", temp.path().to_str().unwrap(), "--no-user-config", "mcp"]);
+        process.kill_on_drop(true).args(["--repo", temp.path().to_str().unwrap(), "--no-user-config", "mcp"]);
         let client = ().serve(TokioChildProcess::new(process).unwrap()).await.unwrap();
         let info = client.peer_info().unwrap();
         assert!(info.instructions.as_ref().unwrap().contains("get_context"));
@@ -195,17 +337,17 @@ async fn real_stdio_mcp_discovery_mutation_errors_and_cli_interoperation() {
         assert_eq!(value["note"]["visibility"], "private");
         let id = value["note"]["id"].as_str().unwrap();
         // Keep the MCP service alive while independent CLI processes use the same redb index.
-        assert_eq!(cli(temp.path(), &["list", "--scope", "private"])["total"], 1);
-        cli(temp.path(), &["add", "CLI alongside a running MCP server", "--tag", "papercut"]);
+        assert_eq!(cli(temp.path(), &["list", "--scope", "private"]).await["total"], 1);
+        cli(temp.path(), &["add", "CLI alongside a running MCP server", "--tag", "papercut"]).await;
         let listed = client.call_tool(CallToolRequestParams::new("list_notes").with_arguments(json!({"scope": "all"}).as_object().unwrap().clone())).await.unwrap();
         assert_eq!(listed.structured_content.unwrap()["total"], 2);
         let review = client.call_tool(CallToolRequestParams::new("review_notes").with_arguments(json!({}).as_object().unwrap().clone())).await.unwrap();
         let public = review.structured_content.unwrap();
         assert_eq!(public["total"], 1);
         assert!(!serde_json::to_string(&public).unwrap().contains("MCP private observation"));
-        let preview = client.call_tool(CallToolRequestParams::new("publish_note").with_arguments(json!({"id": id, "dry_run": true}).as_object().unwrap().clone())).await.unwrap();
+        let preview = client.call_tool(CallToolRequestParams::new("publish_note").with_arguments(json!({"id": id, "dry_run": true, "expected_revision": value["note"]["revision"]}).as_object().unwrap().clone())).await.unwrap();
         assert_eq!(preview.structured_content.unwrap()["dry_run"], true);
-        let published = client.call_tool(CallToolRequestParams::new("publish_note").with_arguments(json!({"id": id, "body": "Reviewed public MCP text"}).as_object().unwrap().clone())).await.unwrap();
+        let published = client.call_tool(CallToolRequestParams::new("publish_note").with_arguments(json!({"id": id, "body": "Reviewed public MCP text", "expected_revision": value["note"]["revision"]}).as_object().unwrap().clone())).await.unwrap();
         assert_eq!(published.structured_content.unwrap()["note"]["visibility"], "public");
         let invalid = client.call_tool(CallToolRequestParams::new("create_note").with_arguments(json!({"body": "bad", "tags": ["missing"]}).as_object().unwrap().clone())).await.unwrap();
         assert_eq!(invalid.is_error, Some(true));
@@ -245,8 +387,8 @@ async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
                 "get_note" => json!({"id": id}),
                 "get_tag" => json!({"name": "papercut"}),
                 "create_note" => json!({"body": "Unexpected note"}),
-                "update_note" => json!({"id": id, "body": "Unexpected edit"}),
-                "publish_note" => json!({"id": id, "dry_run": true}),
+                "update_note" => json!({"id": id, "body": "Unexpected edit", "expected_revision": saved["note"]["revision"]}),
+                "publish_note" => json!({"id": id, "dry_run": true, "expected_revision": saved["note"]["revision"]}),
                 "create_tag" => json!({"name": "unexpected", "topic": "Unexpected tag"}),
                 "get_context" | "init_store" | "list_notes" | "review_notes" | "list_tags"
                 | "get_config" | "validate_store" | "rebuild_index" => json!({}),
@@ -314,8 +456,8 @@ async fn mcp_without_repo_binds_each_process_to_its_startup_git_root() {
         let second_cwd = second_root.join("src");
         fs::create_dir_all(&first_cwd).unwrap();
         fs::create_dir_all(&second_cwd).unwrap();
-        init_git(&first_root);
-        init_git(&second_root);
+        init_git(&first_root).await;
+        init_git(&second_root).await;
 
         let first = start_mcp(&first_cwd).await;
         let second = start_mcp(&second_cwd).await;
@@ -332,7 +474,7 @@ async fn mcp_without_repo_binds_each_process_to_its_startup_git_root() {
         assert!(first_root.join(".robostickies/config.toml").is_file());
         assert!(second_root.join(".robostickies/config.toml").is_file());
 
-        init_git(&first_cwd);
+        init_git(&first_cwd).await;
         assert_eq!(
             call_mcp(&first, "get_context", json!({})).await["repository_root"],
             first_root.canonicalize().unwrap().to_str().unwrap()
@@ -412,16 +554,17 @@ async fn mcp_without_repo_uses_its_startup_cwd_outside_git() {
     .expect("MCP CWD fallback test timed out");
 }
 
-#[test]
-fn explicit_relative_repo_overrides_git_discovery() {
+#[tokio::test]
+async fn explicit_relative_repo_overrides_git_discovery() {
     let temp = tempfile::tempdir().unwrap();
-    init_git(temp.path());
+    init_git(temp.path()).await;
     let selected = temp.path().join("selected");
     fs::create_dir(&selected).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_robostickies"))
         .args(["--no-user-config", "--repo", "selected", "init"])
         .current_dir(temp.path())
-        .output()
+        .bounded_output()
+        .await
         .unwrap();
     assert!(
         output.status.success(),
@@ -436,7 +579,7 @@ fn explicit_relative_repo_overrides_git_discovery() {
 async fn context_and_all_resources_agree_before_and_after_initialization() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let temp = tempfile::tempdir().unwrap();
-        init_git(temp.path());
+        init_git(temp.path()).await;
         let selected = temp.path().join("selected");
         fs::create_dir(&selected).unwrap();
         let root = selected.canonicalize().unwrap();
@@ -502,7 +645,7 @@ async fn context_and_all_resources_agree_before_and_after_initialization() {
                     "not_initialized"
                 );
             }
-            assert_eq!(cli(&selected, &["context"]), local);
+            assert_eq!(cli(&selected, &["context"]).await, local);
             for scope in ["all", "private", "public"] {
                 let output = Command::new(env!("CARGO_BIN_EXE_robostickies"))
                     .args([
@@ -513,13 +656,14 @@ async fn context_and_all_resources_agree_before_and_after_initialization() {
                         "--scope",
                         scope,
                     ])
-                    .output()
+                    .bounded_output()
+                    .await
                     .unwrap();
                 assert!(output.status.success());
                 let text = String::from_utf8(output.stdout).unwrap();
                 assert_eq!(text.contains(root), scope != "public");
             }
-            let cli_public = cli(&selected, &["context", "--scope", "public"]);
+            let cli_public = cli(&selected, &["context", "--scope", "public"]).await;
             assert_eq!(cli_public, public);
         }
         assert!(
@@ -708,7 +852,7 @@ async fn running_mcp_refreshes_sources_recovers_cache_and_shares_concurrent_writ
         let edited = call_mcp(
             &client,
             "update_note",
-            json!({"id": id, "status": "archived"}),
+            json!({"id": id, "status": "archived", "expected_revision": saved_read["revision"]}),
         )
         .await;
         assert!(!edited["warnings"].as_array().unwrap().is_empty());
@@ -741,7 +885,7 @@ async fn running_mcp_refreshes_sources_recovers_cache_and_shares_concurrent_writ
                         "add",
                         &format!("Concurrent CLI fixture {i}"),
                     ])
-                    .output()
+                    .bounded_output()
                     .await
                     .unwrap();
                 assert!(
@@ -803,12 +947,12 @@ async fn review_rejects_paging_filters_consistently_and_covers_internal_pages() 
                 .with_arguments(arguments.as_object().unwrap().clone())).await.unwrap();
             assert_eq!(result.is_error, Some(true));
         }
-        let help = command(temp.path()).args(["review", "--help"]).output().unwrap();
+        let help = command(temp.path()).args(["review", "--help"]).bounded_output().await.unwrap();
         assert!(help.status.success());
         let help = String::from_utf8(help.stdout).unwrap();
         for flag in ["--limit", "--cursor"] {
             assert!(!help.contains(flag));
-            let rejected = command(temp.path()).args(["review", flag, "1"]).output().unwrap();
+            let rejected = command(temp.path()).args(["review", flag, "1"]).bounded_output().await.unwrap();
             assert_eq!(rejected.status.code(), Some(2));
             assert!(rejected.stdout.is_empty());
         }
@@ -822,12 +966,12 @@ async fn review_rejects_paging_filters_consistently_and_covers_internal_pages() 
             )).unwrap();
         }
         let archived = call_mcp(&client, "create_note", json!({"body": "Archived needle", "tags": ["paperclip"]})).await;
-        call_mcp(&client, "update_note", json!({"id": archived["note"]["id"], "status": "archived"})).await;
+        call_mcp(&client, "update_note", json!({"id": archived["note"]["id"], "status": "archived", "expected_revision": archived["note"]["revision"]})).await;
         call_mcp(&client, "create_note", json!({"body": "PRIVATE_NEEDLE_SENTINEL", "private": true, "tags": ["papercut"]})).await;
         let review = call_mcp(&client, "review_notes", json!({})).await;
         assert_eq!(review["total"], 1001);
         assert_eq!(review["notes"].as_array().unwrap().len(), 1001);
-        assert_eq!(review, cli(temp.path(), &["review"]));
+        assert_eq!(review, cli(temp.path(), &["review"]).await);
         assert_eq!(review, call_mcp(&client, "review_notes", json!({})).await);
         assert!(!review.to_string().contains("PRIVATE_NEEDLE_SENTINEL"));
         let ids: std::collections::BTreeSet<_> = review["notes"].as_array().unwrap().iter()
@@ -848,7 +992,7 @@ async fn review_rejects_paging_filters_consistently_and_covers_internal_pages() 
         for (query, args, total) in queries {
             let review = call_mcp(&client, "review_notes", query).await;
             assert_eq!(review["total"], total);
-            assert_eq!(review, cli(temp.path(), &args));
+            assert_eq!(review, cli(temp.path(), &args).await);
         }
         for query in [json!({"since": "bad-date"}), json!({"since": "2026-02-01", "until": "2026-01-01"})] {
             assert_eq!(error_mcp(&client, "review_notes", query).await["error"]["code"], "invalid_input");
@@ -858,7 +1002,326 @@ async fn review_rejects_paging_filters_consistently_and_covers_internal_pages() 
         assert!(first["next_cursor"].is_string());
         let second = call_mcp(&client, "list_notes", json!({"limit": 1, "cursor": first["next_cursor"]})).await;
         assert_ne!(first["notes"][0]["id"], second["notes"][0]["id"]);
-        assert_eq!(cli(temp.path(), &["search", "bulk", "--limit", "1"])["notes"].as_array().unwrap().len(), 1);
+        assert_eq!(cli(temp.path(), &["search", "bulk", "--limit", "1"]).await["notes"].as_array().unwrap().len(), 1);
         client.cancel().await.unwrap();
     }).await.expect("complete review test timed out");
+}
+
+#[tokio::test]
+async fn revision_inputs_are_required_and_rejected_requests_do_not_write() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let source = call_mcp(
+            &client,
+            "create_note",
+            json!({"body": "Original private fixture", "private": true}),
+        )
+        .await["note"]
+            .clone();
+        let id = source["id"].as_str().unwrap();
+        let path = temp
+            .path()
+            .join(".robostickies")
+            .join(source["path"].as_str().unwrap());
+        let original = fs::read(&path).unwrap();
+        let tools = client.list_all_tools().await.unwrap();
+        for name in ["update_note", "publish_note"] {
+            let schema = &tools.iter().find(|t| t.name == name).unwrap().input_schema;
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("expected_revision"))
+            );
+            assert_eq!(schema["properties"]["expected_revision"]["type"], "string");
+            for fields in [
+                json!({}),
+                json!({"expected_revision": null}),
+                json!({"expected_revision": ""}),
+                json!({"expected_revision": "stale"}),
+            ] {
+                for dry_run in [false, true] {
+                    let mut args = fields.clone();
+                    args["id"] = json!(id);
+                    if name == "publish_note" {
+                        args["dry_run"] = json!(dry_run);
+                    } else {
+                        args["body"] = json!("Rejected body");
+                    }
+                    let result = client
+                        .call_tool(
+                            CallToolRequestParams::new(name)
+                                .with_arguments(args.as_object().unwrap().clone()),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(result.is_error, Some(true), "{name}: {result:?}");
+                    if fields["expected_revision"] == "" {
+                        assert_eq!(
+                            result.structured_content.unwrap()["error"]["code"],
+                            "invalid_input"
+                        );
+                    } else if fields["expected_revision"] == "stale" {
+                        assert_eq!(
+                            result.structured_content.unwrap()["error"]["code"],
+                            "conflict"
+                        );
+                    }
+                }
+            }
+        }
+        for action in ["update", "archive", "unarchive", "publish"] {
+            let missing = command(temp.path())
+                .args([action, id])
+                .bounded_output()
+                .await
+                .unwrap();
+            assert_eq!(missing.status.code(), Some(2));
+            let blank = command(temp.path())
+                .args([action, id, "--if-match", ""])
+                .bounded_output()
+                .await
+                .unwrap();
+            assert_eq!(blank.status.code(), Some(65));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&blank.stderr).unwrap()["error"]["code"],
+                "invalid_input"
+            );
+            let stale = command(temp.path())
+                .args([action, id, "--if-match", "stale"])
+                .bounded_output()
+                .await
+                .unwrap();
+            assert_eq!(stale.status.code(), Some(1));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&stale.stderr).unwrap()["error"]["code"],
+                "conflict"
+            );
+        }
+        assert_eq!(fs::read(path).unwrap(), original);
+        assert_eq!(
+            fs::read_dir(temp.path().join(".robostickies/notes"))
+                .unwrap()
+                .count(),
+            0
+        );
+        let edited = call_mcp(
+            &client,
+            "update_note",
+            json!({
+                "id": id, "body": "Intervening change", "expected_revision": source["revision"]
+            }),
+        )
+        .await["note"]
+            .clone();
+        for dry_run in [false, true] {
+            assert_eq!(
+                error_mcp(
+                    &client,
+                    "publish_note",
+                    json!({
+                        "id": id, "dry_run": dry_run, "expected_revision": source["revision"]
+                    })
+                )
+                .await["error"]["code"],
+                "conflict"
+            );
+        }
+        assert_eq!(
+            call_mcp(&client, "get_note", json!({"id": id})).await,
+            edited
+        );
+        assert_eq!(
+            cli(temp.path(), &["list", "--scope", "public"]).await["total"],
+            0
+        );
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("Revision boundary test timed out");
+}
+
+#[tokio::test]
+async fn public_cli_and_mcp_queries_ignore_local_duplicate_id_conflicts() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let source = call_mcp(
+            &client,
+            "create_note",
+            json!({"body": "Public duplicate fixture"}),
+        )
+        .await["note"]
+            .clone();
+        let id = source["id"].as_str().unwrap();
+        let before_review = call_mcp(&client, "review_notes", json!({})).await;
+        let before_list = call_mcp(&client, "list_notes", json!({"scope": "public"})).await;
+        let directory = temp.path().join(".robostickies");
+        let path = directory.join(source["path"].as_str().unwrap());
+        let original = fs::read_to_string(&path).unwrap();
+        let duplicate = directory.join(format!("private/notes/{id}.md"));
+        fs::write(
+            &duplicate,
+            original.replace("Public duplicate fixture", "PRIVATE_DUPLICATE_SENTINEL"),
+        )
+        .unwrap();
+        assert_eq!(
+            call_mcp(&client, "review_notes", json!({})).await,
+            before_review
+        );
+        assert_eq!(
+            call_mcp(&client, "list_notes", json!({"scope": "public"})).await,
+            before_list
+        );
+        assert_eq!(cli(temp.path(), &["review"]).await, before_review);
+        assert_eq!(
+            cli(temp.path(), &["list", "--scope", "public"]).await,
+            before_list
+        );
+        assert_eq!(
+            error_mcp(&client, "get_note", json!({"id": id})).await["error"]["code"],
+            "conflict"
+        );
+        for scope in ["all", "private"] {
+            assert_eq!(
+                error_mcp(&client, "review_notes", json!({"scope": scope})).await["error"]["code"],
+                "invalid_document"
+            );
+        }
+        let public_context = call_mcp(&client, "get_context", json!({"scope": "public"})).await;
+        assert!(public_context["diagnostics"].as_array().unwrap().is_empty());
+        assert!(
+            !public_context
+                .to_string()
+                .contains("PRIVATE_DUPLICATE_SENTINEL")
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), original);
+        fs::remove_file(duplicate).unwrap();
+        assert_eq!(
+            call_mcp(&client, "get_note", json!({"id": id})).await,
+            source
+        );
+        assert_eq!(
+            call_mcp(&client, "review_notes", json!({})).await,
+            before_review
+        );
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("Duplicate namespace protocol test timed out");
+}
+
+#[tokio::test]
+async fn two_mcp_servers_and_cli_cannot_overwrite_each_others_edits() {
+    tokio::time::timeout(Duration::from_secs(40), async {
+        let temp = tempfile::tempdir().unwrap();
+        let first = start_mcp(temp.path()).await;
+        let second = start_mcp(temp.path()).await;
+        call_mcp(&first, "init_store", json!({})).await;
+        for initial_status in ["active", "archived"] {
+            let mut source = call_mcp(&first, "create_note", json!({"body": "Shared original"})).await["note"].clone();
+            if initial_status == "archived" {
+                source = call_mcp(&first, "update_note", json!({"id": source["id"], "status": "archived", "expected_revision": source["revision"]})).await["note"].clone();
+            }
+            let id = source["id"].as_str().unwrap();
+            assert_eq!(call_mcp(&second, "get_note", json!({"id": id})).await, source);
+            assert_eq!(cli(temp.path(), &["get", id]).await, source);
+            let next_status = if initial_status == "active" { "archived" } else { "active" };
+            let barrier = tokio::sync::Barrier::new(3);
+            let status_writer = async {
+                barrier.wait().await;
+                first.call_tool(CallToolRequestParams::new("update_note").with_arguments(json!({
+                    "id": id, "status": next_status, "tags": ["paperclip"], "expected_revision": source["revision"]
+                }).as_object().unwrap().clone())).await.unwrap()
+            };
+            let privacy_writer = async {
+                barrier.wait().await;
+                second.call_tool(CallToolRequestParams::new("update_note").with_arguments(json!({
+                    "id": id, "private": true, "expected_revision": source["revision"]
+                }).as_object().unwrap().clone())).await.unwrap()
+            };
+            let cli_writer = async {
+                barrier.wait().await;
+                command(temp.path()).args(["update", id, "CLI replacement", "--if-match", source["revision"].as_str().unwrap()])
+                    .bounded_output().await.unwrap()
+            };
+            let (status_result, privacy_result, cli_result) = tokio::join!(status_writer, privacy_writer, cli_writer);
+            let winners = [status_result.is_error != Some(true), privacy_result.is_error != Some(true), cli_result.status.success()];
+            assert_eq!(winners.into_iter().filter(|won| *won).count(), 1);
+            for result in [&status_result, &privacy_result] {
+                if result.is_error == Some(true) {
+                    assert_eq!(result.structured_content.as_ref().unwrap()["error"]["code"], "conflict");
+                }
+            }
+            if !cli_result.status.success() {
+                assert_eq!(serde_json::from_slice::<Value>(&cli_result.stderr).unwrap()["error"]["code"], "conflict");
+            }
+            let current = call_mcp(&first, "get_note", json!({"id": id})).await;
+            assert_eq!(current["body"].as_str().unwrap().trim(), if winners[2] { "CLI replacement" } else { "Shared original" });
+            assert_eq!(current["status"], if winners[0] { next_status } else { initial_status });
+            assert_eq!(current["tags"], if winners[0] { json!(["paperclip"]) } else { json!([]) });
+            assert_eq!(current["visibility"], if winners[1] { "private" } else { "public" });
+            let directory = temp.path().join(".robostickies");
+            assert_eq!(directory.join(format!("notes/{id}.md")).exists(), !winners[1]);
+            assert_eq!(directory.join(format!("private/notes/{id}.md")).exists(), winners[1]);
+        }
+        let request = || CallToolRequestParams::new("create_tag").with_arguments(json!({"name": "same", "topic": "Competing definition"}).as_object().unwrap().clone());
+        let (a, b) = tokio::join!(first.call_tool(request()), second.call_tool(request()));
+        let a = a.unwrap(); let b = b.unwrap();
+        assert_ne!(a.is_error == Some(true), b.is_error == Some(true));
+        let loser = if a.is_error == Some(true) { a } else { b };
+        assert_eq!(loser.structured_content.unwrap()["error"]["code"], "conflict");
+        assert_eq!(call_mcp(&first, "validate_store", json!({})).await["healthy"], true);
+        first.cancel().await.unwrap(); second.cancel().await.unwrap();
+    }).await.expect("Shared edit race test timed out");
+}
+
+#[tokio::test]
+async fn lock_contention_is_bounded_and_process_exit_releases_the_lock() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        cli(temp.path(), &["init"]).await;
+        let client = start_mcp(temp.path()).await;
+        let lock_path = temp.path().join(".robostickies/cache/store.lock");
+        let mut holder = fixture_command("lock")
+            .env("ROBOSTICKIES_TEST_LOCK", &lock_path)
+            .spawn()
+            .unwrap();
+        wait_ready(&mut holder).await;
+        let mut blocked_cli = command(temp.path());
+        blocked_cli.args(["add", "Blocked CLI write"]);
+        let (mcp, cli_result) = tokio::join!(
+            error_mcp(&client, "create_note", json!({"body": "Blocked MCP write"})),
+            blocked_cli.bounded_output()
+        );
+        assert_eq!(mcp["error"]["code"], "busy");
+        let cli_result = cli_result.unwrap();
+        assert_eq!(cli_result.status.code(), Some(75));
+        assert_eq!(
+            fs::read_dir(temp.path().join(".robostickies/notes"))
+                .unwrap()
+                .count(),
+            0
+        );
+        tokio::time::timeout(Duration::from_secs(2), holder.kill())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(holder.try_wait().unwrap().is_some());
+        assert!(lock_path.is_file());
+        call_mcp(
+            &client,
+            "create_note",
+            json!({"body": "MCP after lock release"}),
+        )
+        .await;
+        cli(temp.path(), &["add", "CLI after lock release"]).await;
+        assert_eq!(call_mcp(&client, "list_notes", json!({})).await["total"], 2);
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("Lock contention test timed out");
 }

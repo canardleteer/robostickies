@@ -116,7 +116,8 @@ impl StickyServer {
 
     /// Edit only specified fields. Use status=archived for resolved/obsolete notes
     /// and status=active to restore them. Private notes remain private; publishing
-    /// is separate. Supply expected_revision to reject stale edits.
+    /// is separate. expected_revision is required. On conflict, re-read and reconcile
+    /// the changes before retrying; there is no overwrite bypass.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::SavedNote>(), annotations(destructive_hint = false, open_world_hint = false))]
     async fn update_note(&self, Parameters(input): Parameters<UpdateNote>) -> CallToolResult {
         self.execute(move |store| store.update_note(input)).await
@@ -163,6 +164,8 @@ impl StickyServer {
     /// Copy a private note into public storage immediately, retaining the original.
     /// Private tags and additional metadata are omitted. Set dry_run=true for a
     /// preview, or provide replacement body/public tags. Review prose before sharing.
+    /// expected_revision is required for both previews and copies; a changed source
+    /// returns conflict without creating a copy.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Publication>(), annotations(destructive_hint = false, open_world_hint = false))]
     async fn publish_note(&self, Parameters(input): Parameters<PublishNote>) -> CallToolResult {
         self.execute(move |store| store.publish_note(input)).await

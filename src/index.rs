@@ -17,6 +17,8 @@ const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes_v1");
 const TAGS: TableDefinition<&str, &[u8]> = TableDefinition::new("tags_v1");
 const FILTERS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("filters_v1");
 const DATES: TableDefinition<&str, &str> = TableDefinition::new("dates_v1");
+const METADATA: TableDefinition<&str, u64> = TableDefinition::new("metadata_v1");
+const GENERATION: u64 = 2;
 
 #[derive(Clone, Serialize, Deserialize)]
 enum Entity {
@@ -72,6 +74,11 @@ impl Index {
             }
         };
         let tx = db.begin_write()?;
+        let outdated = tx
+            .open_table(METADATA)?
+            .get("generation")?
+            .map(|v| v.value())
+            != Some(GENERATION);
         let mut old = BTreeMap::new();
         {
             let table = tx.open_table(FILES)?;
@@ -101,26 +108,24 @@ impl Index {
             )?;
         }
         let changed = force
+            || outdated
             || old.len() != sources.len()
             || sources.iter().any(|(key, source)| {
                 old.get(key)
                     .is_none_or(|old| old.fingerprint != source.fingerprint)
             });
-        let mut notes: BTreeMap<String, Note> = BTreeMap::new();
+        let mut groups: BTreeMap<String, Vec<Note>> = BTreeMap::new();
         let mut tags = BTreeMap::new();
-        let mut duplicates = BTreeSet::new();
         for source in sources.values() {
             if let Some(diagnostic) = &source.diagnostic {
                 diagnostics.push(diagnostic.clone());
             }
             match &source.entity {
                 Some(Entity::Note(note)) => {
-                    if let Some(previous) = notes.insert(note.id.clone(), note.clone()) {
-                        duplicates.insert(note.id.clone());
-                        diagnostics.push(Diagnostic { path: note.path.clone(), code: "duplicate_id".into(),
-                            message: "Duplicate note ID; give manually copied notes a new UUID, or use publish".into(),
-                            visibility: if previous.visibility == Visibility::Private || note.visibility == Visibility::Private { Visibility::Private } else { Visibility::Public } });
-                    }
+                    groups
+                        .entry(note.id.clone())
+                        .or_default()
+                        .push(note.clone());
                 }
                 Some(Entity::Tag(tag)) => {
                     tags.insert(tag.name.clone(), tag.clone());
@@ -128,8 +133,31 @@ impl Index {
                 None => {}
             }
         }
-        for id in duplicates {
-            notes.remove(&id);
+        let mut notes = BTreeMap::new();
+        for (id, copies) in groups {
+            if copies.len() == 1 {
+                notes.insert(id, copies[0].clone());
+                continue;
+            }
+            // A local conflict must not change public selection or expose private details.
+            let public: Vec<_> = copies
+                .iter()
+                .filter(|note| note.visibility == Visibility::Public)
+                .collect();
+            let visibility = if copies.iter().any(|n| n.visibility == Visibility::Private) {
+                Visibility::Private
+            } else {
+                Visibility::Public
+            };
+            diagnostics.push(Diagnostic {
+                path: copies[0].path.clone(),
+                code: "duplicate_id".into(),
+                message: "Duplicate note ID; give manually copied notes a new UUID".into(),
+                visibility,
+            });
+            if public.len() == 1 {
+                notes.insert(id, public[0].clone());
+            }
         }
         for note in notes.values() {
             for tag in &note.tags {
@@ -193,6 +221,7 @@ impl Index {
             tx.open_table(DATES)?;
             tx.open_multimap_table(FILTERS)?;
         }
+        tx.open_table(METADATA)?.insert("generation", GENERATION)?;
         tx.commit()?;
         Ok(Self { db, diagnostics })
     }

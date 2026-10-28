@@ -1,7 +1,11 @@
+mod support;
+
+use support::CommandOutput;
+use tokio::process::Command;
+
 use std::{
     fs,
     path::Path,
-    process::Command,
     sync::{Arc, Barrier},
     thread,
 };
@@ -40,18 +44,25 @@ fn note(store: &Store, body: &str, tags: &[&str]) -> Note {
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args([
-            "-c",
-            "user.name=Robostickies test",
-            "-c",
-            "user.email=tests@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .current_dir(root)
-        .output()
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let output = runtime
+        .block_on(
+            Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Robostickies test",
+                    "-c",
+                    "user.email=tests@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(root)
+                .bounded_output(),
+        )
         .unwrap();
     assert!(
         output.status.success(),
@@ -61,13 +72,13 @@ fn git(root: &Path, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-fn publish(id: &str, dry_run: bool) -> PublishNote {
+fn publish(source: &Note, dry_run: bool) -> PublishNote {
     PublishNote {
-        id: id.into(),
+        id: source.id.clone(),
         dry_run,
         body: None,
         tags: None,
-        expected_revision: None,
+        expected_revision: source.revision.clone(),
     }
 }
 
@@ -256,8 +267,8 @@ fn publishing_supports_preview_or_immediate_copy_and_discards_private_metadata()
     );
     fs::write(&path, text).unwrap();
     let source = store.get_note(&source.id).unwrap();
-    let mut request = publish(&source.id, true);
-    request.expected_revision = Some(source.revision.clone());
+    let mut request = publish(&source, true);
+    request.expected_revision = source.revision.clone();
     let preview = store.publish_note(request.clone()).unwrap();
     assert!(!store.directory().join(&preview.note.path).exists());
     assert_eq!(preview.note.tags, ["paperclip"]);
@@ -299,7 +310,7 @@ fn edits_preserve_frontmatter_comments_metadata_and_detect_stale_revisions() {
         .update_note(UpdateNote {
             id: source.id.clone(),
             status: Some(NoteStatus::Archived),
-            expected_revision: Some(source.revision.clone()),
+            expected_revision: source.revision.clone(),
             ..UpdateNote::default()
         })
         .unwrap()
@@ -325,7 +336,7 @@ fn edits_preserve_frontmatter_comments_metadata_and_detect_stale_revisions() {
         .update_note(UpdateNote {
             id: source.id.clone(),
             body: Some("Stale overwrite".into()),
-            expected_revision: Some(source.revision),
+            expected_revision: source.revision,
             ..UpdateNote::default()
         })
         .unwrap_err();
@@ -344,6 +355,7 @@ fn private_routing_on_edit_never_publishes_implicitly() {
     let moved = store
         .update_note(UpdateNote {
             id: public.id.clone(),
+            expected_revision: public.revision.clone(),
             body: Some("Now private text".into()),
             tags: Some(vec!["private:local".into()]),
             ..UpdateNote::default()
@@ -356,6 +368,7 @@ fn private_routing_on_edit_never_publishes_implicitly() {
     let removed = store
         .update_note(UpdateNote {
             id: moved.id.clone(),
+            expected_revision: moved.revision.clone(),
             tags: Some(vec![]),
             ..UpdateNote::default()
         })
@@ -366,6 +379,7 @@ fn private_routing_on_edit_never_publishes_implicitly() {
         store
             .update_note(UpdateNote {
                 id: removed.id,
+                expected_revision: removed.revision,
                 private: Some(false),
                 ..UpdateNote::default()
             })
@@ -411,6 +425,229 @@ fn public_queries_exclude_private_content_topics_counts_and_diagnostics() {
     );
     assert_eq!(store.list_tags(Scope::Public, None).unwrap().tags.len(), 4);
     assert!(!store.doctor().unwrap().healthy);
+}
+
+#[test]
+fn local_duplicate_ids_leave_public_selection_unchanged_and_block_ambiguous_writes() {
+    let (_temp, store) = fresh();
+    let source = note(&store, "Public source", &[]);
+    let before = serde_json::to_value(store.review(Query::default()).unwrap()).unwrap();
+    let public_query = Query {
+        scope: Some(Scope::Public),
+        ..Query::default()
+    };
+    let before_list =
+        serde_json::to_value(store.list_notes(public_query.clone()).unwrap()).unwrap();
+    let original = fs::read_to_string(store.directory().join(&source.path)).unwrap();
+    let duplicate = store
+        .directory()
+        .join(format!("private/notes/{}.md", source.id));
+    fs::write(
+        &duplicate,
+        original.replace("Public source", "PRIVATE_DUPLICATE_SENTINEL"),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(store.review(Query::default()).unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(
+        serde_json::to_value(store.list_notes(public_query).unwrap()).unwrap(),
+        before_list
+    );
+    let health = store.doctor().unwrap();
+    assert!(!health.healthy);
+    assert!(
+        health
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "duplicate_id" && d.visibility == Visibility::Private)
+    );
+    for scope in [Scope::All, Scope::Private] {
+        assert_eq!(
+            store
+                .review(Query {
+                    scope: Some(scope),
+                    ..Query::default()
+                })
+                .unwrap_err()
+                .code,
+            "invalid_document"
+        );
+    }
+    assert_eq!(store.get_note(&source.id).unwrap_err().code, "conflict");
+    assert_eq!(
+        store
+            .update_note(UpdateNote {
+                id: source.id.clone(),
+                body: Some("Must not replace a copy".into()),
+                expected_revision: source.revision.clone(),
+                ..UpdateNote::default()
+            })
+            .unwrap_err()
+            .code,
+        "conflict"
+    );
+    assert_eq!(
+        store
+            .publish_note(publish(&source, false))
+            .unwrap_err()
+            .code,
+        "conflict"
+    );
+    assert_eq!(
+        fs::read_to_string(store.directory().join(&source.path)).unwrap(),
+        original
+    );
+    fs::remove_file(duplicate).unwrap();
+    assert_eq!(
+        store.get_note(&source.id).unwrap().revision,
+        source.revision
+    );
+    assert_eq!(
+        serde_json::to_value(store.review(Query::default()).unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn ambiguous_private_copies_are_excluded_from_the_index() {
+    let (_temp, store) = fresh();
+    tag(&store, "local", true);
+    let source = note(&store, "Private duplicate fixture", &["private:local"]);
+    fs::copy(
+        store.directory().join(&source.path),
+        store.directory().join(format!("notes/{}.md", source.id)),
+    )
+    .unwrap();
+    assert_eq!(store.review(Query::default()).unwrap().total, 0);
+    let page = store.list_notes(Query::default()).unwrap();
+    assert_eq!(page.total, 0);
+    assert!(page.diagnostics.iter().any(|d| d.code == "duplicate_id"));
+    assert_eq!(store.get_note(&source.id).unwrap_err().code, "conflict");
+}
+
+#[test]
+fn cache_generation_rebuilds_legacy_derived_rows_without_source_changes() {
+    let (_temp, store) = fresh();
+    let source = note(&store, "Public duplicate cache fixture", &[]);
+    note(&store, "Other cached note keeps the table nonempty", &[]);
+    fs::copy(
+        store.directory().join(&source.path),
+        store
+            .directory()
+            .join(format!("private/notes/{}.md", source.id)),
+    )
+    .unwrap();
+    assert_eq!(store.review(Query::default()).unwrap().total, 2);
+    let source_bytes = fs::read(store.directory().join(&source.path)).unwrap();
+    for generation in [None, Some(1)] {
+        let db = redb::Database::create(store.directory().join("cache/index.redb")).unwrap();
+        let tx = db.begin_write().unwrap();
+        // Model the old policy's omission while preserving its unchanged source cache.
+        tx.open_table(redb::TableDefinition::<&str, &[u8]>::new("notes_v1"))
+            .unwrap()
+            .remove(source.id.as_str())
+            .unwrap();
+        tx.delete_table(redb::TableDefinition::<&str, u64>::new("metadata_v1"))
+            .unwrap();
+        if let Some(generation) = generation {
+            tx.open_table(redb::TableDefinition::<&str, u64>::new("metadata_v1"))
+                .unwrap()
+                .insert("generation", generation)
+                .unwrap();
+        }
+        tx.commit().unwrap();
+        drop(db);
+        let public = store.review(Query::default()).unwrap();
+        assert_eq!(public.total, 2);
+        assert!(public.notes.iter().any(|n| n.id == source.id));
+        assert_eq!(
+            fs::read(store.directory().join(&source.path)).unwrap(),
+            source_bytes
+        );
+    }
+}
+
+#[test]
+fn updates_and_publications_require_current_nonblank_revisions() {
+    let (_temp, store) = fresh();
+    let source = store
+        .create_note(CreateNote {
+            body: "Private original".into(),
+            tags: vec![],
+            private: Some(true),
+        })
+        .unwrap()
+        .note;
+    let path = store.directory().join(&source.path);
+    let bytes = fs::read(&path).unwrap();
+    for (revision, code) in [
+        ("", "invalid_input"),
+        ("   ", "invalid_input"),
+        ("stale", "conflict"),
+    ] {
+        assert_eq!(
+            store
+                .update_note(UpdateNote {
+                    id: source.id.clone(),
+                    expected_revision: revision.into(),
+                    body: Some("Rejected edit".into()),
+                    ..UpdateNote::default()
+                })
+                .unwrap_err()
+                .code,
+            code
+        );
+        for dry_run in [true, false] {
+            let mut request = publish(&source, dry_run);
+            request.expected_revision = revision.into();
+            assert_eq!(store.publish_note(request).unwrap_err().code, code);
+        }
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            fs::read_dir(store.directory().join("notes"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+    let updated = store
+        .update_note(UpdateNote {
+            id: source.id.clone(),
+            expected_revision: source.revision.clone(),
+            body: Some("Newly reviewed text".into()),
+            ..UpdateNote::default()
+        })
+        .unwrap()
+        .note;
+    assert_eq!(
+        store
+            .publish_note(publish(&source, false))
+            .unwrap_err()
+            .code,
+        "conflict"
+    );
+    assert_eq!(
+        store
+            .publish_note(publish(&updated, true))
+            .unwrap()
+            .source_revision,
+        updated.revision
+    );
+    assert_eq!(
+        store
+            .publish_note(publish(&updated, false))
+            .unwrap()
+            .note
+            .body
+            .trim(),
+        "Newly reviewed text"
+    );
+    assert_eq!(
+        store.get_note(&updated.id).unwrap().revision,
+        updated.revision
+    );
 }
 
 #[test]
@@ -647,6 +884,7 @@ fn git_excludes_private_data_and_cache_and_reports_already_tracked_private_files
     let error = store
         .update_note(UpdateNote {
             id: private.id,
+            expected_revision: private.revision,
             body: Some("new private data".into()),
             ..UpdateNote::default()
         })
@@ -709,6 +947,7 @@ fn index_tracks_git_checkouts() {
     store
         .update_note(UpdateNote {
             id: original.id.clone(),
+            expected_revision: original.revision.clone(),
             body: Some("Other branch body".into()),
             ..UpdateNote::default()
         })
@@ -948,7 +1187,7 @@ fn outcome_tags_preserve_visibility_and_survive_edits_and_archiving() {
             .update_note(UpdateNote {
                 id: source.id.clone(),
                 tags: Some(tags),
-                expected_revision: Some(source.revision),
+                expected_revision: source.revision,
                 ..UpdateNote::default()
             })
             .unwrap()
@@ -960,7 +1199,7 @@ fn outcome_tags_preserve_visibility_and_survive_edits_and_archiving() {
                 id: source.id.clone(),
                 body: Some("Evidence and guidance destination recorded".into()),
                 status: Some(NoteStatus::Archived),
-                expected_revision: Some(applied.revision),
+                expected_revision: applied.revision,
                 ..UpdateNote::default()
             })
             .unwrap()

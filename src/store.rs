@@ -73,6 +73,19 @@ contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
 (`active` or `archived`); the body is Markdown. Additional metadata is retained
 when editing. The files are authoritative; the redb index is disposable.
 
+Edits, archive/unarchive, and publishing (including previews) require the revision
+from the last successful read or save. Use CLI `--if-match` or MCP
+`expected_revision`. Missing or blank revisions are rejected. A stale revision
+returns `conflict` without writing: re-read and reconcile the changes before
+retrying. There is no overwrite bypass or automatic merge.
+
+Cooperating CLI/MCP clients sharing one OS account on local disk use an exclusive
+operation lock. Source reads, revision comparisons, and saves share that lock;
+content replacement is atomic. Contention waits up to five seconds, then returns
+`busy`. The OS releases the lock when a process exits; keep the lock file in place.
+Concurrent direct editor/Git writes are outside this guarantee. After upgrading,
+restart every MCP process using the checkout before relying on the new contract.
+
 Any private tag makes a note private. `add --private` also keeps an otherwise
 publicly tagged or untagged note local. Private notes stay private when tags
 are removed. `publish <id>` / `publish_note` makes a new public copy, removes
@@ -92,6 +105,11 @@ Find verified history with `review --status archived --tag resolved` or
 `review --status archived --tag adopted`. In MCP use `review_notes` with
 `status: "archived"` and `tags: ["resolved"]` or `["adopted"]`. Select scope and
 qualified tag names explicitly for local private history.
+
+If a public note ID also exists privately, public list/review retains the public
+copy without exposing the conflict. Local diagnostics report duplicate IDs;
+local reviews and ID-based reads/edits/publications reject the ambiguity. Repair
+the copied source's UUID and filename manually. Index recovery does not edit notes.
 
 Use `get_config` / `config show` to inspect effective configuration and sources.
 User defaults come from the platform config directory's `robostickies.toml`.
@@ -652,10 +670,12 @@ impl Store {
 
     /// Edit selected fields and preserve additional YAML metadata and comments.
     /// Privacy can increase here; decreasing it requires an explicit public copy.
+    /// Requires the last-read revision; blank revisions return `invalid_input` and stale
+    /// revisions return `conflict`. The comparison and save share the operation lock.
     pub fn update_note(&self, mut input: UpdateNote) -> Result<SavedNote> {
         let _guard = self.lock(false)?;
         let (mut note, original) = self.read_note(&input.id)?;
-        check_revision(&note, input.expected_revision.as_deref())?;
+        check_revision(&note, &input.expected_revision)?;
         if note.visibility == Visibility::Private && input.private == Some(false) {
             return Err(Error::new(
                 "privacy",
@@ -728,10 +748,12 @@ impl Store {
 
     /// Copy a private note into public storage, optionally returning a preview only.
     /// The original is retained. Extra metadata and private references are not copied.
+    /// Both previews and copies require the last-read revision. Blank revisions return
+    /// `invalid_input`; stale revisions return `conflict` without creating a copy.
     pub fn publish_note(&self, input: PublishNote) -> Result<Publication> {
         let _guard = self.lock(false)?;
         let (source, _) = self.read_note(&input.id)?;
-        check_revision(&source, input.expected_revision.as_deref())?;
+        check_revision(&source, &input.expected_revision)?;
         if source.visibility != Visibility::Private {
             return Err(Error::new(
                 "invalid_input",
@@ -951,8 +973,14 @@ impl Store {
     }
 }
 
-fn check_revision(note: &Note, expected: Option<&str>) -> Result<()> {
-    if expected.is_some_and(|expected| expected != note.revision) {
+fn check_revision(note: &Note, expected: &str) -> Result<()> {
+    if expected.trim().is_empty() {
+        return Err(Error::new(
+            "invalid_input",
+            "Read the note and supply its revision before editing or publishing",
+        ));
+    }
+    if expected != note.revision {
         return Err(Error::new(
             "conflict",
             "Note changed since it was read; read it again before applying the update",
