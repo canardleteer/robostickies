@@ -352,6 +352,15 @@ MCP servers and CLI writers against the same isolated store.
 Live installed-connection checks remain necessary after MCP changes; follow the
 [self-drive-testing skill](.agents/skills/self-drive-testing/SKILL.md).
 
+Self-drive observations, fixtures, and run records stay private by default; save
+run records under `.robostickies/private/runs/`. Public fixtures are permitted
+when a test needs public visibility. Before committing, remove every public
+test-generated note and public test output, including copies of self-drive
+findings. Delete synthetic notes and unreferenced test tag definitions from both
+namespaces. Archiving or leaving fixtures unstaged is insufficient. Keep genuine
+unresolved findings as private notes, separate from fixture tags; retain reusable
+lessons in code, regression tests, or scoped agent guidance.
+
 CLI errors use `invalid_input`, `invalid_document`, `not_found`, `not_initialized`,
 `conflict`, `privacy`, `configuration`, `busy`, `io`, `index`, or `internal` codes.
 Exit statuses are 2 for clap usage, 65 for invalid input/documents, 66 for missing

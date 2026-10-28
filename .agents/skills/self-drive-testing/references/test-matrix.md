@@ -1,16 +1,20 @@
 # Feature matrix
 
 Build the case list from the tools and resources advertised by the server.
-Record results under `.robostickies/runs/`; keep this reference reusable.
+Record results under `.robostickies/private/runs/<run>/`; keep this reference
+reusable.
 For each case, retain its input and expected outcome with the observed result.
 Use channels `installed connection`, `child process`, or `automated test` and
 statuses `passed`, `failed`, or `pending`.
 
 ## Ordinary workflows
 
-Use the installed connection and synthetic content. Inspect the matching source
-files after writes. Tag fixtures and give each run a unique body marker; keep a
-list of owned IDs because clearing tags is part of the lifecycle checks.
+Use the installed connection and synthetic content. Keep test notes and tag
+definitions private by default; request public visibility only when the case needs
+it. Inspect source files after writes. Record every owned ID/path in the private
+ledger because clearing tags and publishing copies are lifecycle checks. Delete
+synthetic fixtures from both namespaces after the run and before any commit;
+Exercise archive/restore, then delete the fixture sources.
 
 | Surface | Cases and expected behavior |
 | --- | --- |
@@ -27,6 +31,7 @@ list of owned IDs because clearing tags is part of the lifecycle checks.
 | `validate_store`, `rebuild_index` | Healthy sources produce a healthy report; rebuild leaves Markdown unchanged |
 | Resources | Read `robostickies://context`, `robostickies://guidance`, `robostickies://tags`, `robostickies://config` as JSON before and after init; compare with corresponding tools |
 | Invalid calls | Unknown arguments; invalid IDs/tag names; empty bodies; unknown tags; invalid limits/dates/cursors; useful errors without unintended writes |
+| Cleanup | Ledger-owned synthetic notes and unreferenced fixture definitions deleted from both namespaces; no public test-generated notes/copies or public run output before commit; genuine findings and retained evidence stay private |
 
 For publishing, add synthetic extra frontmatter to an owned private fixture,
 then read its latest revision. Confirm preview leaves no file at its returned
@@ -60,9 +65,14 @@ through a live connection.
 
 ## Resume after installation
 
-Keep a checkpoint in the local run ledger with the source revision or diff,
+Keep a checkpoint in the private run ledger with the source revision or diff,
 installed executable identity, note IDs, and remaining live calls. After the
 user confirms restart, rediscover schemas and repeat the affected cases. For
 argument validation, send an unsupported field to each tool with otherwise
 valid inputs and check rejection before any mutation. Also verify that tools
 without parameters still accept an omitted arguments object.
+
+After verification, remove all owned synthetic notes and unused fixture definitions,
+including temporary public copies. Rebuild and validate the index. Check public
+queries with all statuses and the private ownership ledger before committing;
+Git staging alone cannot detect public test artifacts left on disk.

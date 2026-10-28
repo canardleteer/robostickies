@@ -13,6 +13,18 @@ repository in local context. Record concrete friction with `papercut` and useful
 successes with `paperclip` while continuing the task. Publish a sanitized public
 copy of a private observation before promoting it into tracked guidance.
 
+## Test data
+
+Self-drive observations, test fixtures, and run records are private by default.
+Keep run records in `.robostickies/private/runs/`. Create public fixtures only
+when a test requires public visibility, and record their IDs and paths for cleanup.
+Before any commit, remove every public test-generated note and public test output,
+including published copies of self-drive findings. Delete synthetic notes and
+unreferenced test tag definitions from both namespaces. Archiving fixtures or
+leaving them unstaged is not cleanup. Keep genuine unresolved findings as private
+notes, separate from fixture tags. Durable lessons belong in code, regression
+tests, or scoped agent guidance.
+
 ## Rust CLI conventions
 
 - Use `clap` derive for parsing and retain a `CommandFactory::debug_assert()`

@@ -7,7 +7,7 @@ description: Exercise robostickies through its installed MCP server while improv
 
 Use the installed MCP connection as a user would. Read the repository instructions
 and [feature matrix](references/test-matrix.md). Refine this skill from observed
-behavior; keep run-specific results in the local store.
+behavior; keep run-specific results in the ignored private namespace.
 
 ## Start and record evidence
 
@@ -18,17 +18,26 @@ Confirm `repository_root` in local context. Each MCP process keeps its startup
 repository selection; changing the agent's working directory does not retarget
 it. Public context omits the root entirely.
 
-Keep every generated `.robostickies/` file and run result out of commits at this
-development stage. Retain the built-in private/cache exclusions. Add no broader
-ignore rules or Git exclusions.
+Self-drive observations, synthetic notes, fixture tag definitions, and run records
+are private by default. Use MCP `private: true` or CLI `--private` when creating
+test data. Use public fixtures only when the case requires public visibility.
+Record the reason before creation, then save the returned IDs and paths for
+cleanup. Test omitted-privacy defaults in isolated stores, without changing this
+checkout's configuration. Keep genuine
+findings separate from fixture tags.
+
+Retain the built-in private/cache exclusions. Add no broader ignore rules or Git
+exclusions. Generated store files and run records stay out of commits; public
+test artifacts must also be deleted before any commit.
 
 Discover the current tools and resources to catch newly added features. Use a
-unique run marker and a defined testing tag for synthetic notes. Save a ledger
-under `.robostickies/runs/` with returned IDs and revisions. Keep copied private
-responses in `private/runs/`; use outcomes in the public run summary. For each case, record
-the expected result before checking it. Identify the execution channel and keep
-failed or pending checks visible; child-process success does not verify the
-agent's installed connection.
+unique run marker and a private testing tag for synthetic notes. Save the ledger
+and all copied responses under `.robostickies/private/runs/<run>/` in the checkout.
+Record returned IDs, revisions, current source paths, and fixture ownership,
+including untagged notes and publication copies. For each case, record the expected
+result before checking it. Identify the execution channel and keep failed or
+pending checks visible; child-process success does not verify the agent's
+installed connection.
 
 Exercise ordinary workflows through MCP. Use temporary stores for malformed
 sources, cache damage, filesystem hazards, configuration layers, and agent-file
@@ -51,9 +60,11 @@ A save with cache warnings still
 created a note: retain its ID and repair the cache before retrying discovery.
 Repeating creation would make a duplicate.
 
-Omit `private` to derive visibility from tags. Explicit `private=false` conflicts
-with a private tag; it does not overrule that tag. Private notes remain private
-after tag removal. Publishing creates a new public copy and retains the original;
+When explicitly testing visibility derivation, omit `private` and use a private
+tag. Otherwise request private storage explicitly. Use `private=false` only for
+an intentional public test case. It conflicts with a private tag; it does not
+overrule that tag. Private notes remain private after tag removal. Publishing
+creates a new public copy and retains the original;
 preview with `dry_run=true` first. Metadata removal does not redact the body.
 Use synthetic markers for privacy tests.
 
@@ -81,9 +92,10 @@ Describe the actual result and its cost, then suggest a correction if known.
 A `paperclip` explains what helped and when to reuse it. Search before adding
 another observation and update findings when evidence changes.
 
-Keep synthetic fixtures distinct from findings about this codebase. Archive only
-the fixture IDs owned by the run after their lifecycle tests finish. Leave an
-unverified fix pending rather than archiving its papercut.
+Keep synthetic fixtures distinct from genuine findings about this codebase.
+Archive/restore are lifecycle test cases; afterward delete the synthetic fixtures.
+Record genuine findings as private notes, and leave an unverified fix pending
+rather than deleting or archiving its papercut.
 
 After a fix passes in the affected environment, retain `papercut`, add `resolved`,
 record evidence, and archive. MCP fixes require installation, user-confirmed agent
@@ -115,6 +127,26 @@ behavior and batch related fixes. Review new prose through slop-guard, validate
 the skill, and run the repository quality checks. Before committing, stage
 explicit source or skill paths and inspect the staged changes for generated data.
 
+## Clean up before a commit
+
+Delete all ledger-owned synthetic notes from both namespaces after the run,
+including untagged notes, notes whose tags were cleared, and publication copies.
+Delete owned fixture tag definitions only when no remaining notes reference them.
+Keep genuine findings as private notes and retain needed evidence only under
+`.robostickies/private/runs/`.
+
+Remove every public test-generated note and public test output before any commit,
+including temporary public copies of self-drive findings. Archiving a fixture or
+leaving it unstaged/untracked does not satisfy this rule. Reusable lessons belong
+in code, regression tests, or appropriately scoped agent guidance.
+
+Use the ownership ledger rather than tags alone to select deletions. Re-read
+changed sources and reconcile revisions. If no deletion API is available, remove
+only owned Markdown files under the existing store OS lock after checking their
+last-read revisions; never delete the lock file. Rebuild and validate the index.
+Verify that ledger-owned fixture sources are gone and public queries across all
+statuses contain no test artifacts. Inspect the staged paths before committing.
+
 ## Install and wait
 
 When a change affects MCP, finish the batch and verify it with fresh child
@@ -122,7 +154,9 @@ processes. Save a local checkpoint describing completed cases and the next live
 calls, source revision/diff, fixture IDs, completed checks, and pending findings.
 Run `cargo install --path . --locked --force` once for the batch, verify the
 installed executable, record its hash, and mark the checkpoint awaiting restart.
-Tell the user installation is ready.
+Tell the user installation is ready. Keep the checkpoint private and default
+fixtures retained across the restart to private storage. Public exceptions still
+require cleanup before a commit.
 
 Stop until the user confirms that every MCP process sharing this checkout has
 restarted.
@@ -134,4 +168,5 @@ Confirm root selection/public omission, review schema and CLI behavior, then
 initialize idempotently and check outcome topics, startup guidance, and resource
 agreement. Repeat affected workflows and record evidence before applying outcomes.
 If verification fails, keep the findings pending and repeat the fix/install/wait
-cycle. Commit and push only after installed-connection verification passes.
+cycle. After verification passes, complete fixture cleanup before committing
+or pushing. No temporary public test data may remain at that point.
