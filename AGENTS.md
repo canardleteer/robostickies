@@ -53,6 +53,10 @@ agent guidance.
 
 ## Agent documentation
 
+Update the [usage documentation](docs/usage/README.md) whenever user-facing
+behavior changes. Keep the root README's Features list and links aligned with
+those guides.
+
 Maintain this file according to the [AGENTS.md standard](https://agents.md/).
 Keep guidance portable across agent clients and preserve the format of existing
 agent instructions when implementing opt-in integration in other repositories.
