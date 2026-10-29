@@ -1,0 +1,5 @@
+format_version = 1
+
+[tags]
+default_private = false
+private_patterns = []

@@ -7,23 +7,33 @@ Public review must never include private notes, tags, counts, or diagnostics.
 
 ## Session orientation
 
+Install this checkout with `cargo install --path . --locked` and use the CLI or
+installed MCP server while developing robostickies itself.
+
 At the start of work, run `robostickies context` or call MCP `get_context`.
 Read tag topics and the full guidance for startup tags, and confirm the selected
 repository in local context. Record concrete friction with `papercut` and useful
 successes with `paperclip` while continuing the task. Publish a sanitized public
 copy of a private observation before promoting it into tracked guidance.
 
+Track the shared `.robostickies` configuration, guidance, public tag definitions,
+and reviewed public findings in Git, just as in any other repository. Keep the
+private namespace and cache ignored with the built-in exclusions. When asked to
+share findings, review and sanitize the prose, preview and publish the public
+copy, and retain the private original.
+
 ## Test data
 
 Self-drive observations, test fixtures, and run records are private by default.
 Keep run records in `.robostickies/private/runs/`. Create public fixtures only
 when a test requires public visibility, and record their IDs and paths for cleanup.
-Before any commit, remove every public test-generated note and public test output,
-including published copies of self-drive findings. Delete synthetic notes and
-unreferenced test tag definitions from both namespaces. Archiving fixtures or
-leaving them unstaged is not cleanup. Keep genuine unresolved findings as private
-notes, separate from fixture tags. Durable lessons belong in code, regression
-tests, or scoped agent guidance.
+Before any commit, remove synthetic notes and public test output, including
+copies made to test publishing and temporary copies used to promote guidance.
+Delete unreferenced test tag definitions from both namespaces. Archiving fixtures
+or leaving them unstaged is not cleanup. Keep genuine findings private by default,
+separate from fixture tags; reviewed public findings selected for sharing may
+remain in Git. Durable lessons also belong in code, regression tests, or scoped
+agent guidance.
 
 ## Rust CLI conventions
 

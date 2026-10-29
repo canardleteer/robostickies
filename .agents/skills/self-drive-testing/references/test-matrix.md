@@ -13,7 +13,7 @@ Use the installed connection and synthetic content. Keep test notes and tag
 definitions private by default; request public visibility only when the case needs
 it. Inspect source files after writes. Record every owned ID/path in the private
 ledger because clearing tags and publishing copies are lifecycle checks. Delete
-synthetic fixtures from both namespaces after the run and before any commit;
+synthetic fixtures from both namespaces after the run and before any commit.
 Exercise archive/restore, then delete the fixture sources.
 
 | Surface | Cases and expected behavior |
@@ -31,7 +31,8 @@ Exercise archive/restore, then delete the fixture sources.
 | `validate_store`, `rebuild_index` | Healthy sources produce a healthy report; rebuild leaves Markdown unchanged |
 | Resources | Read `robostickies://context`, `robostickies://guidance`, `robostickies://tags`, `robostickies://config` as JSON before and after init; compare with corresponding tools |
 | Invalid calls | Unknown arguments; invalid IDs/tag names; empty bodies; unknown tags; invalid limits/dates/cursors; useful errors without unintended writes |
-| Cleanup | Ledger-owned synthetic notes and unreferenced fixture definitions deleted from both namespaces; no public test-generated notes/copies or public run output before commit; genuine findings and retained evidence stay private |
+| Cleanup | Ledger-owned synthetic notes and unreferenced fixture definitions deleted from both namespaces; no public test fixtures or public run output before commit; original findings and retained evidence stay private |
+| Sharing findings | When asked to share genuine findings, preview and publish reviewed prose; retain the private original; commit selected public copies with shared configuration and public definitions; keep fixture ownership separate |
 
 For publishing, add synthetic extra frontmatter to an owned private fixture,
 then read its latest revision. Confirm preview leaves no file at its returned

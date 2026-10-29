@@ -354,12 +354,18 @@ Live installed-connection checks remain necessary after MCP changes; follow the
 
 Self-drive observations, fixtures, and run records stay private by default; save
 run records under `.robostickies/private/runs/`. Public fixtures are permitted
-when a test needs public visibility. Before committing, remove every public
-test-generated note and public test output, including copies of self-drive
-findings. Delete synthetic notes and unreferenced test tag definitions from both
-namespaces. Archiving or leaving fixtures unstaged is insufficient. Keep genuine
-unresolved findings as private notes, separate from fixture tags; retain reusable
-lessons in code, regression tests, or scoped agent guidance.
+when a test needs public visibility. Before committing, remove synthetic notes
+and public test output, including copies made to test publishing and temporary
+copies used to promote guidance. Delete unreferenced fixture tag definitions
+from both namespaces. Archiving or leaving fixtures unstaged is insufficient.
+Keep genuine findings private by default and separate from fixture tags.
+
+This repository also shares robostickies findings in Git. When asked to publish
+genuine findings, review and sanitize their prose, preview and publish public
+copies, and retain the private originals. Commit selected public findings with
+the shared `.robostickies` configuration, guidance, and public tag definitions.
+Private files, cache data, fixtures, and run records stay out of commits. Reusable
+lessons also belong in code, regression tests, or scoped agent guidance.
 
 CLI errors use `invalid_input`, `invalid_document`, `not_found`, `not_initialized`,
 `conflict`, `privacy`, `configuration`, `busy`, `io`, `index`, or `internal` codes.

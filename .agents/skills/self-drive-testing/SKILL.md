@@ -23,12 +23,12 @@ are private by default. Use MCP `private: true` or CLI `--private` when creating
 test data. Use public fixtures only when the case requires public visibility.
 Record the reason before creation, then save the returned IDs and paths for
 cleanup. Test omitted-privacy defaults in isolated stores, without changing this
-checkout's configuration. Keep genuine
-findings separate from fixture tags.
+checkout's configuration. Keep genuine findings separate from fixture tags.
 
 Retain the built-in private/cache exclusions. Add no broader ignore rules or Git
-exclusions. Generated store files and run records stay out of commits; public
-test artifacts must also be deleted before any commit.
+exclusions. Private files, cache data, fixtures, and run records stay out of
+commits. Delete public test artifacts before any commit. Shared configuration,
+guidance, and public tag definitions can accompany reviewed public findings.
 
 Discover the current tools and resources to catch newly added features. Use a
 unique run marker and a private testing tag for synthetic notes. Save the ledger
@@ -97,6 +97,11 @@ Archive/restore are lifecycle test cases; afterward delete the synthetic fixture
 Record genuine findings as private notes, and leave an unverified fix pending
 rather than deleting or archiving its papercut.
 
+When asked to share genuine findings, review and sanitize the prose, preview and
+publish a public copy, and retain the private original. Record which public
+findings are selected for Git history separately from the fixture ledger. Keep
+private paths, personal configuration, and raw test responses out of public prose.
+
 After a fix passes in the affected environment, retain `papercut`, add `resolved`,
 record evidence, and archive. MCP fixes require installation, user-confirmed agent
 restart, and checks through the installed connection first. Archived status alone
@@ -132,13 +137,15 @@ explicit source or skill paths and inspect the staged changes for generated data
 Delete all ledger-owned synthetic notes from both namespaces after the run,
 including untagged notes, notes whose tags were cleared, and publication copies.
 Delete owned fixture tag definitions only when no remaining notes reference them.
-Keep genuine findings as private notes and retain needed evidence only under
+Keep original findings as private notes and retain needed evidence only under
 `.robostickies/private/runs/`.
 
-Remove every public test-generated note and public test output before any commit,
-including temporary public copies of self-drive findings. Archiving a fixture or
-leaving it unstaged/untracked does not satisfy this rule. Reusable lessons belong
-in code, regression tests, or appropriately scoped agent guidance.
+Remove synthetic notes and public test output before any commit, including
+copies made to test publishing and temporary copies used to promote guidance.
+Archiving a fixture or leaving it unstaged/untracked does not satisfy this rule.
+Retain reviewed public findings selected for sharing, along with their public
+definitions and shared configuration. Reusable lessons also belong in code,
+regression tests, or appropriately scoped agent guidance.
 
 Use the ownership ledger rather than tags alone to select deletions. Re-read
 changed sources and reconcile revisions. If no deletion API is available, remove

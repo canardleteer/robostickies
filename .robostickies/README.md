@@ -1,0 +1,95 @@
+# Robostickies
+
+At the start of work, read the tag catalog and the full guidance for tags marked
+`read_on_start`. Use `robostickies context` or the MCP `get_context` tool.
+
+Launch `robostickies mcp` from the agent's repository or working directory.
+The process selects the containing Git root, or its working directory outside
+Git, and keeps that selection for its lifetime. Use `--repo DIR` for an explicit
+override; relative paths resolve from the startup working directory.
+
+Record brief, concrete observations while working, then continue your task:
+
+- `papercut`: friction, misleading guidance, broken tools, or avoidable rework.
+  Explain the trigger, its effect, and what would have helped.
+- `paperclip`: something that saved time or produced a useful result. Describe
+  what worked and when to reuse it; routine success usually needs no note.
+- Use any defined tags together, or leave a general note untagged.
+
+For a verified fix, retain `papercut`, add `resolved`, record verification
+evidence, and archive. Verify in the affected environment; MCP fixes require
+installation and an agent restart followed by checks through the installed
+connection. Archived status alone does not prove resolution.
+
+For reusable guidance, retain `paperclip`, add `adopted` after the guidance exists
+in the appropriately scoped AGENTS.md and has been reviewed, record its destination,
+and archive. Publish a sanitized public copy of a private observation before
+promoting it into tracked guidance. Keep other useful paperclips active without
+`adopted`. Read the outcome tag's full guidance before applying it.
+
+Outcome tags use the ordinary tag and update APIs. Retain the existing tags and
+visibility. If a definition is missing, create it explicitly in the appropriate
+namespace: a public definition for a public note, or a public/private definition
+for a private note. A private outcome tag would move a public note into private
+storage. Initialization adds missing predefined definitions without overwriting
+custom guidance and honors tag privacy defaults.
+
+Discover tags with `tags list` / `list_tags` and read details with `tags get` /
+`get_tag`. Define tags in `tags/<name>.md`, using YAML `topic` and optionally
+`read_on_start`, followed by Markdown guidance. Create them with `tags create` /
+`create_tag`. Private definitions live separately in `private/tags/` and are
+always addressed as `private:<name>`; public names cannot shadow them.
+
+Notes live in `notes/<uuid>.md` or `private/notes/<uuid>.md`. YAML frontmatter
+contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
+(`active` or `archived`); the body is Markdown. Additional metadata is retained
+when editing. The files are authoritative; the redb index is disposable.
+
+Edits, archive/unarchive, and publishing (including previews) require the revision
+from the last successful read or save. Use CLI `--if-match` or MCP
+`expected_revision`. Missing or blank revisions are rejected. A stale revision
+returns `conflict` without writing: re-read and reconcile the changes before
+retrying. There is no overwrite bypass or automatic merge.
+
+Cooperating CLI/MCP clients sharing one OS account on local disk use an exclusive
+operation lock. Source reads, revision comparisons, and saves share that lock;
+content replacement is atomic. Contention waits up to five seconds, then returns
+`busy`. The OS releases the lock when a process exits; keep the lock file in place.
+Concurrent direct editor/Git writes are outside this guarantee. After upgrading,
+restart every MCP process using the checkout before relying on the new contract.
+
+Any private tag makes a note private. `add --private` also keeps an otherwise
+publicly tagged or untagged note local. Private notes stay private when tags
+are removed. `publish <id>` / `publish_note` makes a new public copy, removes
+private tags and additional metadata, and retains the private original.
+Use `--dry-run` / `dry_run: true` to preview, and replace the body if necessary.
+Publishing copies the supplied prose; review the text you choose to share.
+
+Browse with visibility (`public`, `private`, `all`), tags, excluded tags, status,
+text, and date filters. Tag filters require all selected tags; exclusions reject
+any match. Search is a case-insensitive literal substring. Dates accept UTC
+YYYY-MM-DD or RFC3339; `since` is inclusive and `until` is exclusive.
+Review defaults to public notes. Local review can explicitly include private or
+all notes. To include a private observation in public review, publish it first.
+Review is deterministic material for you or an agent to summarize.
+Review inputs have no limit or cursor; list/search retain pagination.
+Find verified history with `review --status archived --tag resolved` or
+`review --status archived --tag adopted`. In MCP use `review_notes` with
+`status: "archived"` and `tags: ["resolved"]` or `["adopted"]`. Select scope and
+qualified tag names explicitly for local private history.
+
+If a public note ID also exists privately, public list/review retains the public
+copy without exposing the conflict. Local diagnostics report duplicate IDs;
+local reviews and ID-based reads/edits/publications reject the ambiguity. Repair
+the copied source's UUID and filename manually. Index recovery does not edit notes.
+
+Use `get_config` / `config show` to inspect effective configuration and sources.
+User defaults come from the platform config directory's `robostickies.toml`.
+`[tags] default_private = false` is the default; `private_patterns` accepts globs.
+Precedence: explicit creation option, private/config.toml, user configuration,
+config.toml, built-ins. The private namespace and cache are Git-ignored.
+Ignore rules do not remove already tracked content from Git history.
+
+Use `doctor` to validate sources and Git exclusions, and `reindex` to rebuild
+the index. Never edit the binary index. `init --agents` optionally inserts a
+small pointer into AGENTS.md while preserving the rest of that file.
