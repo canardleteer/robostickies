@@ -1,6 +1,8 @@
 # Feature matrix
 
 Build the case list from the tools and resources advertised by the server.
+Cover each new feature or behavior change with its affected workflows and failure
+paths.
 Record results under `.robostickies/private/runs/<run>/`; keep this reference
 reusable.
 For each case, retain its input and expected outcome with the observed result.
@@ -67,9 +69,12 @@ through a live connection.
 ## Resume after installation
 
 Keep a checkpoint in the private run ledger with the source revision or diff,
-installed executable identity, note IDs, and remaining live calls. After the
-user confirms restart, rediscover schemas and repeat the affected cases. For
-argument validation, send an unsupported field to each tool with otherwise
+installed executable identity, note IDs, and remaining live calls. Use either a
+user-confirmed restart of the current session or a separate fresh agent process
+with its own newly started MCP server. The current session may continue during
+separate verification. Once the chosen connection is ready, rediscover schemas
+and repeat the affected cases. For argument validation, send an unsupported field
+to each tool with otherwise
 valid inputs and check rejection before any mutation. Also verify that tools
 without parameters still accept an omitted arguments object.
 

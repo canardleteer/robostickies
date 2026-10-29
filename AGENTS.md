@@ -22,6 +22,22 @@ private namespace and cache ignored with the built-in exclusions. When asked to
 share findings, review and sanitize the prose, preview and publish the public
 copy, and retain the private original.
 
+## Self-drive verification
+
+Run new features and behavior changes through the affected
+[self-drive-testing](.agents/skills/self-drive-testing/SKILL.md) workflows before
+finalizing them, alongside regression tests. Exercise the changed feature through
+the installed CLI or MCP connection. Keep papercuts and provisional findings
+private until their evidence has been finalized for review.
+
+Installed MCP code changes need verification through a newly started server.
+You may launch the skill in a separate fresh agent process with its own MCP
+server bound to this checkout while the current session continues. This
+satisfies the restart requirement for verification without restarting the current
+session. If using the current session for those checks, wait for the user's
+restart confirmation first. Restart an older MCP process before using it for
+behavior changed by the installation.
+
 ## Test data
 
 Self-drive observations, test fixtures, and run records are private by default.
@@ -53,10 +69,14 @@ agent guidance.
 
 ## Agent documentation
 
+Update the [usage documentation](docs/usage/README.md) whenever user-facing
+behavior changes. Keep the root README's Features list and links aligned with
+those guides.
+
 Maintain this file according to the [AGENTS.md standard](https://agents.md/).
 Keep guidance portable across agent clients and preserve the format of existing
 agent instructions when implementing opt-in integration in other repositories.
 Maintain project-local skills under `.agents/skills/` according to the
-[Agent Skills specification](https://agentskills.io/specification). For live MCP
-testing, use [self-drive-testing](.agents/skills/self-drive-testing/SKILL.md).
+[Agent Skills specification](https://agentskills.io/specification).
 For changes under `src/`, follow [src/AGENTS.md](src/AGENTS.md).
+For tests, follow [tests/AGENTS.md](tests/AGENTS.md).

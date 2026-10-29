@@ -18,8 +18,9 @@ Record brief, concrete observations while working, then continue your task:
 
 For a verified fix, retain `papercut`, add `resolved`, record verification
 evidence, and archive. Verify in the affected environment; MCP fixes require
-installation and an agent restart followed by checks through the installed
-connection. Archived status alone does not prove resolution.
+installation and checks through a newly started agent MCP connection. A separate
+fresh testing agent can supply that connection while the current session continues.
+Archived status alone does not prove resolution.
 
 For reusable guidance, retain `paperclip`, add `adopted` after the guidance exists
 in the appropriately scoped AGENTS.md and has been reviewed, record its destination,
@@ -56,7 +57,8 @@ operation lock. Source reads, revision comparisons, and saves share that lock;
 content replacement is atomic. Contention waits up to five seconds, then returns
 `busy`. The OS releases the lock when a process exits; keep the lock file in place.
 Concurrent direct editor/Git writes are outside this guarantee. After upgrading,
-restart every MCP process using the checkout before relying on the new contract.
+start a new server for verification. Restart older servers before using them for
+behavior changed by the upgrade.
 
 Any private tag makes a note private. `add --private` also keeps an otherwise
 publicly tagged or untagged note local. Private notes stay private when tags

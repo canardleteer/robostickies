@@ -1,6 +1,6 @@
 ---
 name: self-drive-testing
-description: Exercise robostickies through its installed MCP server while improving this repository. Use for agent-driven feature testing, recording papercuts and paperclips, reproducing defects, and verifying a batch of MCP changes after restart.
+description: Exercise robostickies through its installed MCP server while improving this repository. Use for agent-driven feature testing, recording papercuts and paperclips, reproducing defects, and verifying installed MCP changes through a new agent connection.
 ---
 
 # Self-drive testing
@@ -90,7 +90,8 @@ inspection reports the conflict and ambiguous ID-based operations fail.
 A `papercut` explains how to reproduce a problem and what should have happened.
 Describe the actual result and its cost, then suggest a correction if known.
 A `paperclip` explains what helped and when to reuse it. Search before adding
-another observation and update findings when evidence changes.
+another observation and update findings when evidence changes. Keep provisional
+papercuts private until reproduction and verification evidence are finalized.
 
 Keep synthetic fixtures distinct from genuine findings about this codebase.
 Archive/restore are lifecycle test cases; afterward delete the synthetic fixtures.
@@ -103,9 +104,9 @@ findings are selected for Git history separately from the fixture ledger. Keep
 private paths, personal configuration, and raw test responses out of public prose.
 
 After a fix passes in the affected environment, retain `papercut`, add `resolved`,
-record evidence, and archive. MCP fixes require installation, user-confirmed agent
-restart, and checks through the installed connection first. Archived status alone
-does not establish resolution.
+record evidence, and archive. MCP fixes require installation and checks through
+a newly started agent MCP connection first; use either verification route
+described below. Archived status alone does not establish resolution.
 
 For paperclips that warrant permanent instructions, place the reusable guidance
 in the appropriately scoped AGENTS.md and review it. Retain `paperclip`, add
@@ -154,26 +155,38 @@ last-read revisions; never delete the lock file. Rebuild and validate the index.
 Verify that ledger-owned fixture sources are gone and public queries across all
 statuses contain no test artifacts. Inspect the staged paths before committing.
 
-## Install and wait
+## Install and verify
 
-When a change affects MCP, finish the batch and verify it with fresh child
-processes. Save a local checkpoint describing completed cases and the next live
-calls, source revision/diff, fixture IDs, completed checks, and pending findings.
+When a change requires a new MCP binary, finish the batch and verify it with fresh
+child processes. Save a private checkpoint with the source revision or diff and
+the remaining live calls. Retain completed checks and fixture ownership there.
 Run `cargo install --path . --locked --force` once for the batch, verify the
-installed executable, record its hash, and mark the checkpoint awaiting restart.
-Tell the user installation is ready. Keep the checkpoint private and default
-fixtures retained across the restart to private storage. Public exceptions still
-require cleanup before a commit.
+installed executable, and record its hash.
 
-Stop until the user confirms that every MCP process sharing this checkout has
-restarted.
+Choose the verification process that fits the workflow:
 
-The existing server process continues running the old binary. After restart,
-rediscover tools and read context. Repeat affected checks through the installed
-connection before recording verification or closing the findings.
-Confirm root selection/public omission, review schema and CLI behavior, then
-initialize idempotently and check outcome topics, startup guidance, and resource
-agreement. Repeat affected workflows and record evidence before applying outcomes.
-If verification fails, keep the findings pending and repeat the fix/install/wait
-cycle. After verification passes, complete fixture cleanup before committing
-or pushing. No temporary public test data may remain at that point.
+- Current session: mark the checkpoint awaiting restart and tell the user the
+  installation is ready. Stop affected live verification until the user confirms
+  this session's MCP process has restarted.
+- Separate fresh agent: mark the checkpoint awaiting fresh-agent verification
+  and launch the skill in a new agent process for this checkout. Give it the
+  checkpoint and its own newly started MCP server using the installed binary.
+  The current session can continue without a restart.
+
+The testing agent must use its actual MCP connection to the new server.
+Child-process checks remain separate coverage. A process that reuses an older
+server cannot verify the installed changes; restart that server before using it
+for changed behavior. Keep checkpoints and retained fixtures private by default.
+Public test exceptions still require cleanup before a commit.
+
+In the chosen testing process, rediscover tools and read context. Confirm the
+repository root and installed executable identity against the checkpoint.
+Repeat affected checks through that installed connection before recording
+verification or closing findings. Confirm public context omission and review
+schema/CLI behavior when affected, then initialize idempotently and check startup
+guidance and resource agreement.
+
+Record evidence before applying outcomes. If verification fails, keep findings
+pending and repeat the fix/install/verify cycle. After verification passes,
+complete fixture cleanup before committing or pushing. No temporary public test
+data may remain at that point.
