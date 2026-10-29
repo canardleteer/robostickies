@@ -30,6 +30,30 @@ local Git rules instead, initialize with `--ignore-location local`; rules go in
 Git's `info/exclude`, including in linked worktrees. Git ignore rules do not
 remove existing tracked files. `doctor` identifies tracking and exclusion issues.
 
+## Keep the entire store local
+
+To keep an untracked store out of Git, run from the repository root:
+
+```sh
+printf '%s\n' '/.robostickies/' >> "$(git rev-parse --git-path info/exclude)"
+robostickies init --ignore-location local
+```
+
+The first command adds a whole-store rule to Git's local exclude file, without
+changing tracked ignore files. The CLI flag alone excludes only `private/` and
+`cache/`. To share the whole-store exclusion with other clones, put the same
+`/.robostickies/` pattern in the root `.gitignore` instead.
+
+Leave `--agents` off. Keep MCP configuration outside the repository: use
+`~/.codex/config.toml` for Codex, or Claude Code's local MCP scope, which stores
+the registration in `~/.claude.json`. Personal Claude permissions can live in
+`~/.claude/settings.json`. See [MCP setup](mcp.md) for those options.
+
+The directory still exists on disk. Exclusions do not remove tracked files or
+erase history, including earlier references in agent instructions or client
+configuration. They also do not change robostickies visibility: use `--private`
+for observations that must stay out of public review.
+
 ## Configuration
 
 User configuration is `robostickies.toml` in the platform config directory:

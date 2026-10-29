@@ -11,6 +11,32 @@ A disposable, pure Rust `redb` database indexes the local source files.
 Inspired by [papercuts](https://github.com/treygoff24/papercuts) and
 [paperclips](https://github.com/dlorp/paperclips).
 
+## Quick Start
+
+Requires Rust 1.90 or newer. Install from Git and initialize the target repository:
+
+```sh
+cargo install --git https://github.com/canardleteer/robostickies.git --locked
+cd /path/to/repository
+robostickies init
+robostickies context
+```
+
+Register with one agent:
+
+```sh
+# Codex
+codex mcp add robostickies -- robostickies mcp
+
+# Claude Code
+claude mcp add --transport stdio --scope local robostickies -- robostickies mcp
+```
+
+Start that agent in the repository and use `/mcp` to check the connection. See
+[MCP setup and tool approvals](docs/usage/mcp.md) for details, or
+[keep the entire store local](docs/usage/privacy-and-configuration.md#keep-the-entire-store-local)
+to use it without adding tracked integration files.
+
 ## Features
 
 - [CLI access](docs/usage/getting-started.md) works from any directory in a

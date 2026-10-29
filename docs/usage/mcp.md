@@ -37,7 +37,35 @@ args = ["mcp"]
 ```
 
 Project configuration loads for trusted projects. See the
-[Codex MCP documentation](https://developers.openai.com/codex/mcp/).
+[Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+### Pre-approve Codex tools
+
+To pre-approve every robostickies tool, extend the existing server entry in
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.robostickies]
+command = "robostickies"
+args = ["mcp"]
+default_tools_approval_mode = "approve"
+```
+
+This includes note edits and creation of public copies. For selective approval,
+set that default to `"prompt"` and add entries for the tools you want to approve:
+
+```toml
+[mcp_servers.robostickies.tools.get_context]
+approval_mode = "approve"
+
+[mcp_servers.robostickies.tools.create_note]
+approval_mode = "approve"
+```
+
+`approval_mode` belongs under an individual tool; the server-wide key is
+`default_tools_approval_mode`. Per-tool settings override the default. See the
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+for supported policies.
 
 ## Claude Code
 
@@ -49,8 +77,36 @@ claude mcp list
 ```
 
 Start Claude Code there and use `/mcp` to check the connection. Local scope keeps
-the registration specific to that project and user. See the
-[Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
+the registration specific to that project and user in `~/.claude.json`, outside
+the repository. See the
+[Claude Code MCP documentation](https://code.claude.com/docs/en/mcp#mcp-installation-scopes).
+
+### Pre-approve Claude Code tools
+
+Merge this rule into `~/.claude/settings.json` to pre-approve all tools from the
+registered `robostickies` server:
+
+```json
+{
+  "permissions": {
+    "allow": ["mcp__robostickies__*"]
+  }
+}
+```
+
+This also permits note edits and publication. For selective approval, replace
+the wildcard entry with full tool names such as
+`mcp__robostickies__get_context` and `mcp__robostickies__create_note`.
+Existing ask or deny rules can still require confirmation or block a call.
+Use `/permissions` to review the rules.
+
+For settings limited to this project, use `.claude/settings.local.json` instead.
+If you create that file by hand, add `/.claude/settings.local.json` to Git's local
+exclude file to keep it untracked. The
+[Claude Code permissions guide](https://code.claude.com/docs/en/permissions#mcp)
+describes MCP matching; the
+[settings guide](https://code.claude.com/docs/en/settings#settings-files-and-who-they-affect)
+explains file scopes.
 
 ## Using the server
 
