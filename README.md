@@ -11,6 +11,9 @@ A disposable, pure Rust `redb` database indexes the local source files.
 Inspired by [papercuts](https://github.com/treygoff24/papercuts) and
 [paperclips](https://github.com/dlorp/paperclips).
 
+> [!WARNING]
+> Clanker generated code, without commitment to a stable API yet.
+
 ## Quick Start
 
 Requires Rust 1.90 or newer. Install from Git and initialize the target repository:
