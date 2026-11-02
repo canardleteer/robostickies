@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Prepare the next release after 0.1.1-rc.2.
+
 ## [0.1.1-rc.2](https://github.com/canardleteer/robostickies/compare/1336fbf750647689c7233d8cf3a130aff0efc2e9...v0.1.1-rc.2) - 2026-11-02
 
 ### Other
