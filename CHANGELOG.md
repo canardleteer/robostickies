@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.2](https://github.com/canardleteer/robostickies/compare/v0.1.1...v0.1.2) - 2026-11-02
+
+### Other
+
+- retire bootstrap publishing and simplify maintainer docs
+
 ## [0.1.1](https://github.com/canardleteer/robostickies/compare/v0.1.1-rc.2...v0.1.1) - 2026-11-02
 
 ### Other
