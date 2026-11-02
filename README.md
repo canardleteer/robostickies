@@ -24,10 +24,10 @@ Inspired by [papercuts](https://github.com/treygoff24/papercuts) and
 
 ## Quick Start
 
-Requires Rust 1.90 or newer. Install the release candidate and initialize the target repository:
+Requires Rust 1.90 or newer. Install robostickies and initialize the target repository:
 
 ```sh
-cargo install robostickies --version '=0.1.1-rc.2' --locked
+cargo install robostickies --version '=0.1.1' --locked
 cd /path/to/repository
 robostickies init
 robostickies context

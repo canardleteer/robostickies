@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "robostickies"
-version = "0.1.1-rc.2"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
