@@ -48,10 +48,14 @@ enum Command {
         #[arg(long, value_enum, default_value = "store")]
         ignore_location: IgnoreLocation,
     },
-    /// Record a brief note. Pass - for stdin, or --file for Markdown text.
+    /// Record nonempty UTF-8 text. Markdown or plain text is preferred.
     Add {
         #[command(flatten)]
         text: TextInput,
+        /// Advisory body hint: markdown, text, yaml, or another nonblank string.
+        #[arg(long)]
+        body_format: Option<String>,
+        /// Defined tag identifier; repeat for multiple tags (for example, tooling).
         #[arg(long = "tag")]
         tags: Vec<String>,
         #[command(flatten)]
@@ -64,6 +68,12 @@ enum Command {
         id: String,
         #[command(flatten)]
         text: TextInput,
+        /// Set an advisory body hint; omitted hints remain unchanged.
+        #[arg(long, conflicts_with = "clear_body_format")]
+        body_format: Option<String>,
+        /// Remove an existing string body hint.
+        #[arg(long)]
+        clear_body_format: bool,
         /// Replace all tags with this set; repeat the flag for multiple tags.
         #[arg(long = "tag", conflicts_with = "clear_tags")]
         tags: Vec<String>,
@@ -123,6 +133,9 @@ enum Command {
         dry_run: bool,
         #[command(flatten)]
         text: TextInput,
+        /// Set a public hint explicitly; the private source hint is never copied.
+        #[arg(long)]
+        body_format: Option<String>,
         /// Replace the public tag set; private tags are forbidden.
         #[arg(long = "tag", conflicts_with = "clear_tags")]
         tags: Vec<String>,
@@ -151,6 +164,12 @@ enum Command {
         /// Validate and preview the migration without changing source files.
         #[arg(long)]
         dry_run: bool,
+        /// Decline this optional target until the recommended target changes.
+        #[arg(long, conflicts_with_all = ["dry_run", "keep_snapshot"])]
+        defer: bool,
+        /// Retain the private recovery snapshot after a successful upgrade.
+        #[arg(long)]
+        keep_snapshot: bool,
     },
     /// Serve MCP over stdio; stdout is exclusively protocol data.
     Mcp,
@@ -174,8 +193,11 @@ impl Command {
 
 #[derive(Debug, Subcommand)]
 enum TagCommand {
+    /// Define a tag identifier, short topic, and longer Markdown guidance.
     Create {
+        /// Bare identifier used by --tag (for example, tooling).
         name: String,
+        /// Short description shown in the tag catalog; not the tag identifier.
         #[arg(long)]
         topic: String,
         #[command(flatten)]
@@ -185,13 +207,16 @@ enum TagCommand {
         #[command(flatten)]
         visibility: VisibilityArgs,
     },
+    /// Discover tag identifiers and their short topics.
     List {
         #[arg(long, value_enum, default_value = "all")]
         scope: Scope,
         #[arg(long)]
         text: Option<String>,
     },
+    /// Read a tag's short topic and complete Markdown guidance.
     Get {
+        /// Identifier, qualified as private:<name> for private definitions.
         name: String,
     },
 }
@@ -203,9 +228,9 @@ enum ConfigCommand {
 
 #[derive(Debug, Args)]
 struct TextInput {
-    /// Markdown text, or - to read stdin.
+    /// UTF-8 text, or - to read stdin. Use Markdown for tag guidance.
     body: Option<String>,
-    /// Read Markdown from a UTF-8 file, or - for stdin.
+    /// Read UTF-8 text from a file, or - for stdin.
     #[arg(long, conflicts_with = "body")]
     file: Option<PathBuf>,
 }
@@ -312,29 +337,59 @@ pub async fn run(cli: Cli) -> Result<()> {
         discovered
     };
     let json = cli.json;
-    let notice_version =
+    let (notice, local_warnings) =
         if !matches!(cli.command, Command::Mcp | Command::Upgrade { .. }) && store.initialized() {
             let config = store.configuration_for_scope(cli.command.read_scope())?;
-            config.upgrade_available.then_some(config.data_version)
+            (
+                config.upgrade.reminder().then_some(config.upgrade),
+                config.warnings,
+            )
         } else {
-            None
+            (None, vec![])
         };
     let result = match cli.command {
         Command::Mcp => crate::mcp::serve(store).await,
-        Command::Upgrade { dry_run } => emit(store.upgrade(dry_run)?, json, |result| {
-            format!(
-                "{} -> {}: {}",
-                result.source_version,
-                result.target_version,
-                if result.dry_run {
-                    "dry run; no sources changed"
-                } else if result.wrote {
-                    "upgraded"
-                } else {
-                    "already current"
-                }
-            )
-        }),
+        Command::Upgrade {
+            dry_run,
+            defer,
+            keep_snapshot,
+        } => {
+            let result = store.upgrade_with_options(UpgradeOptions {
+                dry_run,
+                defer,
+                keep_snapshot,
+            })?;
+            if let Some(snapshot) = &result.snapshot {
+                eprintln!(
+                    "Snapshot: {} ({})",
+                    snapshot.path,
+                    if snapshot.retained {
+                        "retained"
+                    } else {
+                        "removed after validation"
+                    }
+                );
+            }
+            for warning in &result.warnings {
+                eprintln!("Warning: {warning}");
+            }
+            emit(result, json, |result| {
+                format!(
+                    "{} -> {}: {}",
+                    result.source_version,
+                    result.target_version,
+                    if result.deferred {
+                        "upgrade deferred; sources unchanged"
+                    } else if result.dry_run {
+                        "dry run; no sources changed"
+                    } else if result.wrote {
+                        "upgraded"
+                    } else {
+                        "already current"
+                    }
+                )
+            })
+        }
         Command::Init {
             agents,
             ignore_location,
@@ -354,6 +409,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         ),
         Command::Add {
             text,
+            body_format,
             tags,
             visibility,
         } => {
@@ -366,6 +422,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             emit(
                 store.create_note(CreateNote {
                     body,
+                    body_format,
                     tags,
                     private: visibility.value(),
                 })?,
@@ -377,6 +434,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Update {
             id,
             text,
+            body_format,
+            clear_body_format,
             tags,
             clear_tags,
             status,
@@ -386,6 +445,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             store.update_note(UpdateNote {
                 id,
                 body: text.read()?,
+                body_format,
+                clear_body_format,
                 tags: if clear_tags || !tags.is_empty() {
                     Some(tags)
                 } else {
@@ -482,6 +543,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             id,
             dry_run,
             text,
+            body_format,
             tags,
             clear_tags,
             if_match,
@@ -490,6 +552,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 id,
                 dry_run,
                 body: text.read()?,
+                body_format,
                 tags: if clear_tags || !tags.is_empty() {
                     Some(tags)
                 } else {
@@ -518,6 +581,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             if !context.initialized {
                 text.push_str("\nNot initialized. Run robostickies init or call init_store.\n");
+            }
+            if let Some(advice) = &context.upgrade
+                && advice.requirement == crate::version::UpgradeRequirement::Must
+            {
+                text.push_str(&format!("\n{}\n", advice.message));
             }
             text.push_str("\n## Available tags\n\n");
             for tag in &context.tags {
@@ -558,6 +626,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                         "problems found"
                     }
                 );
+                if health.upgrade.requirement == crate::version::UpgradeRequirement::Must {
+                    text.push_str(&format!("{}\n", health.upgrade.message));
+                }
                 for diagnostic in &health.diagnostics {
                     text.push_str(&format!(
                         "{} [{}]: {}\n",
@@ -577,12 +648,14 @@ pub async fn run(cli: Cli) -> Result<()> {
         }
     };
     if result.is_ok()
-        && let Some(version) = notice_version
+        && let Some(advice) = notice
     {
-        eprintln!(
-            "Notice: Store data version {version} is supported; run robostickies upgrade to use {}.",
-            crate::version::CURRENT
-        );
+        eprintln!("Notice: {}", advice.message);
+    }
+    if result.is_ok() {
+        for warning in local_warnings {
+            eprintln!("Warning: {warning}");
+        }
     }
     result
 }

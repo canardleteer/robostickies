@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Result,
-    version::{self, DataVersion},
+    version::{self, DataVersion, UpgradeAdvice},
 };
 
 /// Tag-creation defaults. Explicit creation arguments always take precedence.
@@ -69,6 +69,9 @@ pub struct Configuration {
     pub data_version: DataVersion,
     /// Derived from the shared version; legacy stores remain readable and writable.
     pub upgrade_available: bool,
+    pub upgrade: UpgradeAdvice,
+    /// Local advisory warnings. These never appear in shared/public configuration.
+    pub warnings: Vec<String>,
     pub tags: TagDefaults,
     pub sources: Vec<String>,
     pub user_config_path: Option<String>,
@@ -92,11 +95,14 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
         format_version: version::FORMAT_VERSION,
         data_version: version::LEGACY,
         upgrade_available: false,
+        upgrade: UpgradeAdvice::new(version::LEGACY, None),
+        warnings: vec![],
         tags: TagDefaults::default(),
         sources: vec![],
         user_config_path: user.map(|p| p.display().to_string()),
     };
     let shared = root.join("config.toml");
+    let mut initialized = false;
     let mut paths = vec![shared.clone()];
     if let Some(path) = user {
         paths.push(path.to_path_buf());
@@ -105,7 +111,14 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
         paths.push(root.join("private/config.toml"));
     }
     for path in paths {
-        let text = match fs::read_to_string(&path) {
+        let text = match fs::metadata(&path).and_then(|metadata| {
+            if !metadata.is_file() {
+                return Err(std::io::Error::other(
+                    "Configuration sources must be regular files",
+                ));
+            }
+            fs::read_to_string(&path)
+        }) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
@@ -122,7 +135,8 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
             )
         })?;
         if path == shared {
-            if layer.format_version != Some(version::FORMAT_VERSION) {
+            initialized = true;
+            if layer.format_version.is_none() {
                 return Err(Error::new(
                     "configuration",
                     format!(
@@ -153,7 +167,7 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
             return Err(Error::new(
                 "configuration",
                 format!(
-                    "Unsupported format_version {version} in {}; expected {}",
+                    "Unsupported format_version {version} in {}; expected {}. Use compatible tooling for newer formats; do not downgrade the version marker",
                     path.display(),
                     version::FORMAT_VERSION
                 ),
@@ -175,7 +189,71 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
             )
         })?;
     }
+    let deferred = if include_private {
+        match read_preferences(root) {
+            Ok(value) => value,
+            Err(()) => {
+                config.warnings.push("Invalid or unreadable local upgrade preferences; recommendations remain enabled.".into());
+                None
+            }
+        }
+    } else {
+        None
+    };
+    config.upgrade = if initialized {
+        UpgradeAdvice::new(config.data_version, deferred.as_deref())
+    } else {
+        UpgradeAdvice::uninitialized()
+    };
     Ok(config)
+}
+
+pub(crate) const PREFERENCES: &str = "private/upgrade-preferences.toml";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpgradePreferences {
+    deferred_target: String,
+}
+
+fn read_preferences(root: &Path) -> std::result::Result<Option<String>, ()> {
+    crate::document::safe_path(root, Path::new(PREFERENCES)).map_err(|_| ())?;
+    let path = root.join(PREFERENCES);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(()),
+    };
+    if !metadata.is_file() {
+        return Err(());
+    }
+    let text = fs::read_to_string(path).map_err(|_| ())?;
+    let preferences: UpgradePreferences = toml::from_str(&text).map_err(|_| ())?;
+    if preferences.deferred_target.trim().is_empty() {
+        return Err(());
+    }
+    Ok(Some(preferences.deferred_target))
+}
+
+/// Validate a transformed shared configuration before its atomic replacement.
+pub(crate) fn validate_migration(text: &str, target: &str) -> Result<()> {
+    let layer: Layer = toml::from_str(text)
+        .map_err(|_| Error::new("configuration", "Migration produced invalid configuration"))?;
+    if layer.format_version != Some(version::FORMAT_VERSION)
+        || layer.data_version.as_deref() != Some(target)
+    {
+        return Err(Error::new(
+            "configuration",
+            "Migration did not produce its declared target",
+        ));
+    }
+    target.parse::<DataVersion>()?;
+    for pattern in layer.tags.private_patterns.unwrap_or_default() {
+        Glob::new(&pattern).map_err(|_| {
+            Error::new("configuration", "Migration produced an invalid tag pattern")
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -225,5 +303,48 @@ mod tests {
             );
         }
         assert!(user_config_path().is_some());
+    }
+
+    #[test]
+    fn future_configuration_formats_require_compatible_tooling_without_rewriting() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        let text = "format_version = 2\ndata_version = 'v1alpha2'\n";
+        fs::write(&path, text).unwrap();
+        let error = load_shared(temp.path()).unwrap_err();
+        assert_eq!(error.code, "configuration");
+        assert!(error.message.contains("compatible tooling"));
+        assert!(error.message.contains("do not downgrade"));
+        assert_eq!(fs::read_to_string(path).unwrap(), text);
+    }
+
+    #[test]
+    fn transformed_configuration_must_validate_its_declared_target() {
+        for text in [
+            "not toml",
+            "format_version = 2\ndata_version = 'v1alpha2'\n",
+            "format_version = 1\ndata_version = 'v1alpha1'\n",
+            "format_version = 1\ndata_version = 'v1alpha2'\n[tags]\nprivate_patterns = ['[']\n",
+        ] {
+            assert_eq!(
+                validate_migration(text, version::CURRENT.as_str())
+                    .unwrap_err()
+                    .code,
+                "configuration"
+            );
+        }
+        assert_eq!(
+            validate_migration("format_version = 1\ndata_version = 'future'\n", "future")
+                .unwrap_err()
+                .code,
+            "configuration"
+        );
+        assert!(
+            validate_migration(
+                "format_version = 1\ndata_version = 'v1alpha2'\n",
+                version::CURRENT.as_str()
+            )
+            .is_ok()
+        );
     }
 }

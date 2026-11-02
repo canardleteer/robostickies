@@ -1,0 +1,2406 @@
+---
+source: tests/contract_snapshots.rs
+assertion_line: 72
+expression: "json!({\"tools\": tools, \"resources\": resources})"
+---
+{
+  "resources": [
+    {
+      "description": "Local configuration defaults and their sources",
+      "mimeType": "application/json",
+      "name": "Effective configuration",
+      "uri": "robostickies://config"
+    },
+    {
+      "description": "Tag topics, startup guidance, and optional AGENTS.md paragraph",
+      "mimeType": "application/json",
+      "name": "Session context",
+      "uri": "robostickies://context"
+    },
+    {
+      "description": "How to record, discover, keep private, and publish notes",
+      "mimeType": "application/json",
+      "name": "Full guidance",
+      "uri": "robostickies://guidance"
+    },
+    {
+      "description": "Available qualified tag names and short topics",
+      "mimeType": "application/json",
+      "name": "Tag catalog",
+      "uri": "robostickies://tags"
+    }
+  ],
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "description": "Record a brief observation. Prefer papercut for friction and paperclip for\nconcrete wins; general notes are welcome. Any private:<tag> forces private\nstorage. Set private=true to keep any note local; omit to derive from tags.\nBodies are nonempty UTF-8 text; optional body_format is an advisory hint.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "Nonempty UTF-8 text. Markdown or plain text is preferred.",
+            "type": "string"
+          },
+          "body_format": {
+            "description": "Advisory metadata.body_format; markdown, text, and yaml are recommended.\nOther nonblank strings are accepted without interpreting the body.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "private": {
+            "description": "Omit to derive privacy from tags. False cannot override a private tag.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      },
+      "name": "create_note",
+      "outputSchema": {
+        "$defs": {
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "note": {
+            "$ref": "#/$defs/Note"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "note",
+          "warnings"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "description": "Define a tag using a bare filename slug, a short topic, and Markdown guidance.\nSet private=true/false to override configuration defaults and name patterns.\nPrivate tags have distinct private:<name> identities even if public names match.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "default": "",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "private": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "read_on_start": {
+            "default": false,
+            "type": "boolean"
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "topic"
+        ],
+        "type": "object"
+      },
+      "name": "create_tag",
+      "outputSchema": {
+        "$defs": {
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "name": {
+            "description": "Scope-qualified name, e.g. `tooling` or `private:tooling`.",
+            "type": "string"
+          },
+          "read_on_start": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/$defs/Visibility"
+          }
+        },
+        "required": [
+          "name",
+          "topic",
+          "read_on_start",
+          "body",
+          "visibility",
+          "revision",
+          "metadata"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Inspect effective TOML configuration, privacy defaults, and their source files.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_config",
+      "outputSchema": {
+        "$defs": {
+          "DataVersion": {
+            "description": "Supported source formats for both public and private repository data.\nIndividual Markdown documents and disposable caches have no data version.",
+            "oneOf": [
+              {
+                "const": "v1alpha1",
+                "description": "Legacy format, also used when the shared field is absent.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha2",
+                "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              }
+            ]
+          },
+          "TagDefaults": {
+            "description": "Tag-creation defaults. Explicit creation arguments always take precedence.",
+            "properties": {
+              "default_private": {
+                "default": false,
+                "type": "boolean"
+              },
+              "private_patterns": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "UpgradeAdvice": {
+            "description": "Structured guidance for explicit migrations. Public advice never uses private\npreferences; deferral only silences optional local reminders for one target.",
+            "properties": {
+              "can_upgrade": {
+                "type": "boolean"
+              },
+              "deferred": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requirement": {
+                "$ref": "#/$defs/UpgradeRequirement"
+              },
+              "source_version": {
+                "$ref": "#/$defs/DataVersion"
+              },
+              "target_version": {
+                "$ref": "#/$defs/DataVersion"
+              }
+            },
+            "required": [
+              "source_version",
+              "target_version",
+              "requirement",
+              "can_upgrade",
+              "deferred",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpgradeRequirement": {
+            "description": "Strength of the recommendation, independent of a local deferral preference.",
+            "enum": [
+              "none",
+              "should",
+              "must"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "data_version": {
+            "$ref": "#/$defs/DataVersion",
+            "description": "Shared store version; user and private configuration cannot override it."
+          },
+          "format_version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "$ref": "#/$defs/TagDefaults"
+          },
+          "upgrade": {
+            "$ref": "#/$defs/UpgradeAdvice"
+          },
+          "upgrade_available": {
+            "description": "Derived from the shared version; legacy stores remain readable and writable.",
+            "type": "boolean"
+          },
+          "user_config_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "description": "Local advisory warnings. These never appear in shared/public configuration.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "format_version",
+          "data_version",
+          "upgrade_available",
+          "upgrade",
+          "warnings",
+          "tags",
+          "sources"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Call this at session start to read tag topics and startup guidance.\nIt also returns effective configuration and an optional AGENTS.md paragraph.",
+      "inputSchema": {
+        "$defs": {
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "$ref": "#/$defs/Scope",
+            "default": "all"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_context",
+      "outputSchema": {
+        "$defs": {
+          "Configuration": {
+            "description": "Fully resolved configuration, with sources in increasing precedence order.",
+            "properties": {
+              "data_version": {
+                "$ref": "#/$defs/DataVersion",
+                "description": "Shared store version; user and private configuration cannot override it."
+              },
+              "format_version": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "$ref": "#/$defs/TagDefaults"
+              },
+              "upgrade": {
+                "$ref": "#/$defs/UpgradeAdvice"
+              },
+              "upgrade_available": {
+                "description": "Derived from the shared version; legacy stores remain readable and writable.",
+                "type": "boolean"
+              },
+              "user_config_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "warnings": {
+                "description": "Local advisory warnings. These never appear in shared/public configuration.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "format_version",
+              "data_version",
+              "upgrade_available",
+              "upgrade",
+              "warnings",
+              "tags",
+              "sources"
+            ],
+            "type": "object"
+          },
+          "DataVersion": {
+            "description": "Supported source formats for both public and private repository data.\nIndividual Markdown documents and disposable caches have no data version.",
+            "oneOf": [
+              {
+                "const": "v1alpha1",
+                "description": "Legacy format, also used when the shared field is absent.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha2",
+                "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              }
+            ]
+          },
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "Tag": {
+            "description": "A user-defined tag and its complete Markdown guidance.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "name": {
+                "description": "Scope-qualified name, e.g. `tooling` or `private:tooling`.",
+                "type": "string"
+              },
+              "read_on_start": {
+                "type": "boolean"
+              },
+              "revision": {
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "name",
+              "topic",
+              "read_on_start",
+              "body",
+              "visibility",
+              "revision",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "TagDefaults": {
+            "description": "Tag-creation defaults. Explicit creation arguments always take precedence.",
+            "properties": {
+              "default_private": {
+                "default": false,
+                "type": "boolean"
+              },
+              "private_patterns": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "TagSummary": {
+            "description": "Compact tag information suitable for indexing and discovery.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "read_on_start": {
+                "type": "boolean"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "name",
+              "topic",
+              "read_on_start",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "UpgradeAdvice": {
+            "description": "Structured guidance for explicit migrations. Public advice never uses private\npreferences; deferral only silences optional local reminders for one target.",
+            "properties": {
+              "can_upgrade": {
+                "type": "boolean"
+              },
+              "deferred": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requirement": {
+                "$ref": "#/$defs/UpgradeRequirement"
+              },
+              "source_version": {
+                "$ref": "#/$defs/DataVersion"
+              },
+              "target_version": {
+                "$ref": "#/$defs/DataVersion"
+              }
+            },
+            "required": [
+              "source_version",
+              "target_version",
+              "requirement",
+              "can_upgrade",
+              "deferred",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpgradeRequirement": {
+            "description": "Strength of the recommendation, independent of a local deferral preference.",
+            "enum": [
+              "none",
+              "should",
+              "must"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "agents_md": {
+            "type": "string"
+          },
+          "configuration": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Configuration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Omitted for public-only context so personal defaults are not exported."
+          },
+          "data_version": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DataVersion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "guidance": {
+            "type": "string"
+          },
+          "initialized": {
+            "type": "boolean"
+          },
+          "repository_root": {
+            "description": "Canonical root selected when the handle was constructed. Omitted in public context.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startup_tags": {
+            "items": {
+              "$ref": "#/$defs/Tag"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/$defs/TagSummary"
+            },
+            "type": "array"
+          },
+          "upgrade": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/UpgradeAdvice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent until initialization. Public advice ignores private preferences."
+          },
+          "upgrade_available": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "initialized",
+          "upgrade_available",
+          "warnings",
+          "guidance",
+          "agents_md",
+          "tags",
+          "startup_tags",
+          "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read a note by full UUID, including its revision for safe subsequent edits.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "get_note",
+      "outputSchema": {
+        "$defs": {
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "description": "Additional YAML fields retained during edits.",
+            "type": "object"
+          },
+          "path": {
+            "description": "Path relative to `.robostickies`.",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Content hash for optimistic concurrency checks.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/NoteStatus"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/$defs/Visibility",
+            "description": "Computed from storage location and private tag references."
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "updated_at",
+          "tags",
+          "status",
+          "body",
+          "visibility",
+          "revision",
+          "path",
+          "metadata"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read complete guidance for a tag, using private:<name> for private definitions.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "get_tag",
+      "outputSchema": {
+        "$defs": {
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "name": {
+            "description": "Scope-qualified name, e.g. `tooling` or `private:tooling`.",
+            "type": "string"
+          },
+          "read_on_start": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/$defs/Visibility"
+          }
+        },
+        "required": [
+          "name",
+          "topic",
+          "read_on_start",
+          "body",
+          "visibility",
+          "revision",
+          "metadata"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Scaffold a repository's .robostickies store. Existing notes and tag definitions\nare preserved. AGENTS.md integration is optional and preserves existing content.",
+      "inputSchema": {
+        "$defs": {
+          "IgnoreLocation": {
+            "description": "Where initialization installs ignore rules.",
+            "enum": [
+              "store",
+              "local"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "agents": {
+            "default": false,
+            "type": "boolean"
+          },
+          "ignore_location": {
+            "$ref": "#/$defs/IgnoreLocation",
+            "default": "store"
+          }
+        },
+        "type": "object"
+      },
+      "name": "init_store",
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "agents_updated": {
+            "type": "boolean"
+          },
+          "created": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created",
+          "agents_updated",
+          "warnings"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Browse or search notes with visibility, tags, excluded tags, status, text,\ndate bounds, and pagination. Text is a case-insensitive literal substring.\nDefaults to active notes across all visibility. Use scope=public for sharing.",
+      "inputSchema": {
+        "$defs": {
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          },
+          "StatusFilter": {
+            "description": "Status selection for browsing and review.",
+            "enum": [
+              "active",
+              "archived",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "default": null,
+            "description": "Cursor returned by a previous response with the same filters.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exclude_tags": {
+            "default": [],
+            "description": "Exclude notes with any of these tags.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Page size, between 1 and 1000.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Scope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Defaults to all for browsing, and public for review."
+          },
+          "since": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/StatusFilter",
+            "default": "active"
+          },
+          "tags": {
+            "default": [],
+            "description": "Every listed tag must be attached to the note.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "text": {
+            "default": null,
+            "description": "Case-insensitive literal substring of the note body.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_notes",
+      "outputSchema": {
+        "$defs": {
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/$defs/Note"
+            },
+            "type": "array"
+          },
+          "total": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notes",
+          "total",
+          "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Discover defined tags and their short topics without loading every full body.\nFilter by visibility or a case-insensitive name/topic substring.",
+      "inputSchema": {
+        "$defs": {
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "$ref": "#/$defs/Scope",
+            "default": "all"
+          },
+          "text": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_tags",
+      "outputSchema": {
+        "$defs": {
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "TagSummary": {
+            "description": "Compact tag information suitable for indexing and discovery.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "read_on_start": {
+                "type": "boolean"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "name",
+              "topic",
+              "read_on_start",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/$defs/TagSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tags",
+          "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "description": "Copy a private note into public storage immediately, retaining the original.\nPrivate tags and additional metadata are omitted. Set dry_run=true for a\npreview, or provide replacement body/public tags. Review prose before sharing.\nexpected_revision is required for both previews and copies; a changed source\nreturns conflict without creating a copy.\nA body_format hint is public only when supplied explicitly for this copy.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "Replace the body when preparing the public copy.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_format": {
+            "description": "Explicit public hint. The source hint is removed with other extra metadata.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dry_run": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "description": "Required last-read source revision, including for previews.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "tags": {
+            "description": "Replace the public tag set. Private tags are always removed or rejected.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "name": "publish_note",
+      "outputSchema": {
+        "$defs": {
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "note": {
+            "$ref": "#/$defs/Note"
+          },
+          "source_revision": {
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run",
+          "source_revision",
+          "note",
+          "warnings"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Rebuild the disposable Rust-native redb index from current Markdown sources.\nSource files and Git history remain intact.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "rebuild_index",
+      "outputSchema": {
+        "$defs": {
+          "DataVersion": {
+            "description": "Supported source formats for both public and private repository data.\nIndividual Markdown documents and disposable caches have no data version.",
+            "oneOf": [
+              {
+                "const": "v1alpha1",
+                "description": "Legacy format, also used when the shared field is absent.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha2",
+                "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              }
+            ]
+          },
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "UpgradeAdvice": {
+            "description": "Structured guidance for explicit migrations. Public advice never uses private\npreferences; deferral only silences optional local reminders for one target.",
+            "properties": {
+              "can_upgrade": {
+                "type": "boolean"
+              },
+              "deferred": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requirement": {
+                "$ref": "#/$defs/UpgradeRequirement"
+              },
+              "source_version": {
+                "$ref": "#/$defs/DataVersion"
+              },
+              "target_version": {
+                "$ref": "#/$defs/DataVersion"
+              }
+            },
+            "required": [
+              "source_version",
+              "target_version",
+              "requirement",
+              "can_upgrade",
+              "deferred",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpgradeRequirement": {
+            "description": "Strength of the recommendation, independent of a local deferral preference.",
+            "enum": [
+              "none",
+              "should",
+              "must"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "data_version": {
+            "$ref": "#/$defs/DataVersion"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "healthy": {
+            "type": "boolean"
+          },
+          "notes": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tags": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "upgrade": {
+            "$ref": "#/$defs/UpgradeAdvice"
+          },
+          "upgrade_available": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "description": "Local advisory preference warnings, separate from source health.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data_version",
+          "upgrade_available",
+          "upgrade",
+          "warnings",
+          "healthy",
+          "notes",
+          "tags",
+          "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Prepare complete deterministic review material for summarization. Visibility\ndefaults to public; private notes must be published first for public review.\nExplicit scope=private or all prepares a local review. Paging is internal.",
+      "inputSchema": {
+        "$defs": {
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          },
+          "StatusFilter": {
+            "description": "Status selection for browsing and review.",
+            "enum": [
+              "active",
+              "archived",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "exclude_tags": {
+            "default": [],
+            "description": "Exclude notes with any of these tags.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Scope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Omit to review public notes only."
+          },
+          "since": {
+            "default": null,
+            "description": "Inclusive creation-date bound (UTC date or RFC3339 timestamp).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/StatusFilter",
+            "default": "active"
+          },
+          "tags": {
+            "default": [],
+            "description": "Every listed tag must be attached to the note.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "text": {
+            "default": null,
+            "description": "Case-insensitive literal substring of the note body.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "default": null,
+            "description": "Exclusive creation-date bound (UTC date or RFC3339 timestamp).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "name": "review_notes",
+      "outputSchema": {
+        "$defs": {
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/$defs/Note"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/$defs/Scope"
+          },
+          "total": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "total",
+          "notes",
+          "markdown",
+          "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "description": "Edit only specified fields. Use status=archived for resolved/obsolete notes\nand status=active to restore them. Private notes remain private; publishing\nis separate. expected_revision is required. On conflict, re-read and reconcile\nthe changes before retrying; there is no overwrite bypass.",
+      "inputSchema": {
+        "$defs": {
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_format": {
+            "description": "Set an advisory string hint. Omit to preserve existing metadata exactly.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clear_body_format": {
+            "default": false,
+            "description": "Remove a string hint; conflicts with body_format. Non-string legacy values\nmust be reconciled in the source rather than overwritten by this interface.",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "description": "Required last-read revision. A stale value rejects the edit without changing sources.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "private": {
+            "description": "True moves a public note into private storage. Publishing is separate.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "name": "update_note",
+      "outputSchema": {
+        "$defs": {
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "note": {
+            "$ref": "#/$defs/Note"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "note",
+          "warnings"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Upgrade the shared store data version for both namespaces. Set dry_run=true\nto preview without changing sources. Notes and customized guidance are preserved.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "defer": {
+            "default": false,
+            "description": "Remember a declined optional target without changing the store version.",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "type": "boolean"
+          },
+          "keep_snapshot": {
+            "default": false,
+            "description": "Retain the recovery snapshot after a successful migration.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "upgrade_store",
+      "outputSchema": {
+        "$defs": {
+          "DataVersion": {
+            "description": "Supported source formats for both public and private repository data.\nIndividual Markdown documents and disposable caches have no data version.",
+            "oneOf": [
+              {
+                "const": "v1alpha1",
+                "description": "Legacy format, also used when the shared field is absent.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha2",
+                "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              }
+            ]
+          },
+          "SnapshotResult": {
+            "description": "Location and final retention of an upgrade snapshot, relative to the repository.",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "retained": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "retained"
+            ],
+            "type": "object"
+          },
+          "UpgradeAdvice": {
+            "description": "Structured guidance for explicit migrations. Public advice never uses private\npreferences; deferral only silences optional local reminders for one target.",
+            "properties": {
+              "can_upgrade": {
+                "type": "boolean"
+              },
+              "deferred": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requirement": {
+                "$ref": "#/$defs/UpgradeRequirement"
+              },
+              "source_version": {
+                "$ref": "#/$defs/DataVersion"
+              },
+              "target_version": {
+                "$ref": "#/$defs/DataVersion"
+              }
+            },
+            "required": [
+              "source_version",
+              "target_version",
+              "requirement",
+              "can_upgrade",
+              "deferred",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpgradeRequirement": {
+            "description": "Strength of the recommendation, independent of a local deferral preference.",
+            "enum": [
+              "none",
+              "should",
+              "must"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "deferred": {
+            "description": "True when this call recorded a declined optional target.",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "description": "Whether the caller requested validation without a source save.",
+            "type": "boolean"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SnapshotResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent for previews, deferrals, and already-current stores."
+          },
+          "source_version": {
+            "$ref": "#/$defs/DataVersion",
+            "description": "Version read while holding the operation lock."
+          },
+          "target_version": {
+            "$ref": "#/$defs/DataVersion",
+            "description": "Application's current data version."
+          },
+          "upgrade": {
+            "$ref": "#/$defs/UpgradeAdvice"
+          },
+          "warnings": {
+            "description": "Local preference or snapshot-cleanup warnings; migration itself succeeded.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "wrote": {
+            "description": "True only when this call saved the migrated shared configuration.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_version",
+          "target_version",
+          "wrote",
+          "dry_run",
+          "deferred",
+          "upgrade",
+          "warnings"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Diagnose invalid sources, unresolved tags, and Git tracking/exclusion problems.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "validate_store",
+      "outputSchema": {
+        "$defs": {
+          "DataVersion": {
+            "description": "Supported source formats for both public and private repository data.\nIndividual Markdown documents and disposable caches have no data version.",
+            "oneOf": [
+              {
+                "const": "v1alpha1",
+                "description": "Legacy format, also used when the shared field is absent.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha2",
+                "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              }
+            ]
+          },
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "UpgradeAdvice": {
+            "description": "Structured guidance for explicit migrations. Public advice never uses private\npreferences; deferral only silences optional local reminders for one target.",
+            "properties": {
+              "can_upgrade": {
+                "type": "boolean"
+              },
+              "deferred": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requirement": {
+                "$ref": "#/$defs/UpgradeRequirement"
+              },
+              "source_version": {
+                "$ref": "#/$defs/DataVersion"
+              },
+              "target_version": {
+                "$ref": "#/$defs/DataVersion"
+              }
+            },
+            "required": [
+              "source_version",
+              "target_version",
+              "requirement",
+              "can_upgrade",
+              "deferred",
+              "message"
+            ],
+            "type": "object"
+          },
+          "UpgradeRequirement": {
+            "description": "Strength of the recommendation, independent of a local deferral preference.",
+            "enum": [
+              "none",
+              "should",
+              "must"
+            ],
+            "type": "string"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "data_version": {
+            "$ref": "#/$defs/DataVersion"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "healthy": {
+            "type": "boolean"
+          },
+          "notes": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tags": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "upgrade": {
+            "$ref": "#/$defs/UpgradeAdvice"
+          },
+          "upgrade_available": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "description": "Local advisory preference warnings, separate from source health.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "data_version",
+          "upgrade_available",
+          "upgrade",
+          "warnings",
+          "healthy",
+          "notes",
+          "tags",
+          "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Identify this running process from compiled build data, without reading a store.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "version",
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "commit": {
+            "description": "Full source commit, or unknown when provenance is unavailable.",
+            "type": "string"
+          },
+          "compiler": {
+            "description": "Compiler version used to build this artifact.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Compiled package name.",
+            "type": "string"
+          },
+          "profile": {
+            "description": "Cargo build profile.",
+            "type": "string"
+          },
+          "source_state": {
+            "description": "Tracked source state: clean, dirty, or unknown.",
+            "type": "string"
+          },
+          "target": {
+            "description": "Rust target triple.",
+            "type": "string"
+          },
+          "version": {
+            "description": "Compiled package SemVer.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "commit",
+          "source_state",
+          "target",
+          "compiler",
+          "profile"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

@@ -1,0 +1,158 @@
+---
+source: tests/contract_snapshots.rs
+assertion_line: 53
+expression: help
+---
+$ robostickies --help
+Small repository-local notes for humans and agents, through CLI and MCP
+
+Usage: robostickies [OPTIONS] <COMMAND>
+
+Commands:
+  init       Scaffold .robostickies without overwriting existing notes or tags
+  add        Record nonempty UTF-8 text. Markdown or plain text is preferred
+  get        Read a note by its full UUID
+  update     Edit selected note fields; unmentioned fields remain unchanged
+  archive    Archive a resolved or obsolete note
+  unarchive  Restore an archived note to active status
+  list       Browse notes with optional filters
+  search     Search note bodies for a case-insensitive literal substring
+  review     Produce complete review material; visibility defaults to public
+  tags       Define tags or discover their short topics and complete guidance
+  publish    Copy a private note into public storage, retaining the original
+  context    Read session guidance, tag topics, startup details, and an AGENTS.md snippet
+  config     Inspect effective configuration and its source files
+  doctor     Validate source files and Git privacy protections
+  reindex    Rebuild the disposable redb index from Markdown sources
+  upgrade    Upgrade the shared store data version, preserving notes and guidance
+  mcp        Serve MCP over stdio; stdout is exclusively protocol data
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --json                       Emit structured JSON instead of human-readable output
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+  -h, --help                       Print help
+  -V, --version                    Print version
+
+$ robostickies add --help
+Record nonempty UTF-8 text. Markdown or plain text is preferred
+
+Usage: robostickies add [OPTIONS] [BODY]
+
+Arguments:
+  [BODY]  UTF-8 text, or - to read stdin. Use Markdown for tag guidance
+
+Options:
+      --file <FILE>                Read UTF-8 text from a file, or - for stdin
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --body-format <BODY_FORMAT>  Advisory body hint: markdown, text, yaml, or another nonblank string
+      --json                       Emit structured JSON instead of human-readable output
+      --tag <TAGS>                 Defined tag identifier; repeat for multiple tags (for example, tooling)
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+      --private                    Keep the new tag or note in ignored private storage
+      --public                     Select public creation; private note tags still require private storage
+  -h, --help                       Print help
+
+$ robostickies update --help
+Edit selected note fields; unmentioned fields remain unchanged
+
+Usage: robostickies update [OPTIONS] --if-match <IF_MATCH> <ID> [BODY]
+
+Arguments:
+  <ID>
+  [BODY]  UTF-8 text, or - to read stdin. Use Markdown for tag guidance
+
+Options:
+      --file <FILE>                Read UTF-8 text from a file, or - for stdin
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --body-format <BODY_FORMAT>  Set an advisory body hint; omitted hints remain unchanged
+      --json                       Emit structured JSON instead of human-readable output
+      --clear-body-format          Remove an existing string body hint
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+      --tag <TAGS>                 Replace all tags with this set; repeat the flag for multiple tags
+      --clear-tags
+      --status <STATUS>            [possible values: active, archived]
+      --private                    Keep the new tag or note in ignored private storage
+      --public                     Select public creation; private note tags still require private storage
+      --if-match <IF_MATCH>        Required last-read revision; re-read and reconcile after a conflict
+  -h, --help                       Print help
+
+$ robostickies tags --help
+Define tags or discover their short topics and complete guidance
+
+Usage: robostickies tags [OPTIONS] <COMMAND>
+
+Commands:
+  create  Define a tag identifier, short topic, and longer Markdown guidance
+  list    Discover tag identifiers and their short topics
+  get     Read a tag's short topic and complete Markdown guidance
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --json                       Emit structured JSON instead of human-readable output
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+  -h, --help                       Print help
+
+$ robostickies tags create --help
+Define a tag identifier, short topic, and longer Markdown guidance
+
+Usage: robostickies tags create [OPTIONS] --topic <TOPIC> <NAME> [BODY]
+
+Arguments:
+  <NAME>  Bare identifier used by --tag (for example, tooling)
+  [BODY]  UTF-8 text, or - to read stdin. Use Markdown for tag guidance
+
+Options:
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --topic <TOPIC>              Short description shown in the tag catalog; not the tag identifier
+      --file <FILE>                Read UTF-8 text from a file, or - for stdin
+      --json                       Emit structured JSON instead of human-readable output
+      --read-on-start
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+      --private                    Keep the new tag or note in ignored private storage
+      --public                     Select public creation; private note tags still require private storage
+  -h, --help                       Print help
+
+$ robostickies publish --help
+Copy a private note into public storage, retaining the original
+
+Usage: robostickies publish [OPTIONS] --if-match <IF_MATCH> <ID> [BODY]
+
+Arguments:
+  <ID>
+  [BODY]  UTF-8 text, or - to read stdin. Use Markdown for tag guidance
+
+Options:
+      --dry-run
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --file <FILE>                Read UTF-8 text from a file, or - for stdin
+      --json                       Emit structured JSON instead of human-readable output
+      --body-format <BODY_FORMAT>  Set a public hint explicitly; the private source hint is never copied
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+      --tag <TAGS>                 Replace the public tag set; private tags are forbidden
+      --clear-tags
+      --if-match <IF_MATCH>        Required source revision, including for --dry-run
+  -h, --help                       Print help
+
+$ robostickies upgrade --help
+Upgrade the shared store data version, preserving notes and guidance
+
+Usage: robostickies upgrade [OPTIONS]
+
+Options:
+      --dry-run                    Validate and preview the migration without changing source files
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --defer                      Decline this optional target until the recommended target changes
+      --json                       Emit structured JSON instead of human-readable output
+      --keep-snapshot              Retain the private recovery snapshot after a successful upgrade
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
+  -h, --help                       Print help

@@ -83,6 +83,12 @@ impl StickyServer {
 
 #[tool_router]
 impl StickyServer {
+    /// Identify this running process from compiled build data, without reading a store.
+    #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::build_info::BuildInfo>(), annotations(read_only_hint = true, open_world_hint = false))]
+    async fn version(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
+        CallToolResult::structured(serde_json::json!(crate::build_info::version()))
+    }
+
     /// Call this at session start to read tag topics and startup guidance.
     /// It also returns effective configuration and an optional AGENTS.md paragraph.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::store::Context>(), annotations(read_only_hint = true, open_world_hint = false))]
@@ -101,13 +107,14 @@ impl StickyServer {
     /// to preview without changing sources. Notes and customized guidance are preserved.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::version::UpgradeResult>(), annotations(destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn upgrade_store(&self, Parameters(input): Parameters<UpgradeOptions>) -> CallToolResult {
-        self.execute(move |store| store.upgrade(input.dry_run))
+        self.execute(move |store| store.upgrade_with_options(input))
             .await
     }
 
     /// Record a brief observation. Prefer papercut for friction and paperclip for
     /// concrete wins; general notes are welcome. Any private:<tag> forces private
     /// storage. Set private=true to keep any note local; omit to derive from tags.
+    /// Bodies are nonempty UTF-8 text; optional body_format is an advisory hint.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::SavedNote>(), annotations(destructive_hint = false, open_world_hint = false))]
     async fn create_note(&self, Parameters(input): Parameters<CreateNote>) -> CallToolResult {
         self.execute(move |store| store.create_note(input)).await
@@ -171,6 +178,7 @@ impl StickyServer {
     /// preview, or provide replacement body/public tags. Review prose before sharing.
     /// expected_revision is required for both previews and copies; a changed source
     /// returns conflict without creating a copy.
+    /// A body_format hint is public only when supplied explicitly for this copy.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Publication>(), annotations(destructive_hint = false, open_world_hint = false))]
     async fn publish_note(&self, Parameters(input): Parameters<PublishNote>) -> CallToolResult {
         self.execute(move |store| store.publish_note(input)).await

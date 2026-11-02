@@ -1,0 +1,42 @@
+---
+source: tests/contract_snapshots.rs
+assertion_line: 154
+expression: "json!({\n    \"saved\":\n    {\"isError\": saved.is_error, \"structuredContent\":\n        normalize_saved(saved.structured_content.unwrap())}, \"error\": error,\n})"
+---
+{
+  "error": {
+    "content": [
+      {
+        "text": "{\"error\":{\"code\":\"invalid_input\",\"message\":\"body_format must be a nonblank string\"}}",
+        "type": "text"
+      }
+    ],
+    "isError": true,
+    "structuredContent": {
+      "error": {
+        "code": "invalid_input",
+        "message": "body_format must be a nonblank string"
+      }
+    }
+  },
+  "saved": {
+    "isError": false,
+    "structuredContent": {
+      "note": {
+        "body": "Synthetic contract example\n",
+        "created_at": "<timestamp>",
+        "id": "<uuid>",
+        "metadata": {
+          "body_format": "text"
+        },
+        "path": "private/notes/<uuid>.md",
+        "revision": "<revision>",
+        "status": "active",
+        "tags": [],
+        "updated_at": "<timestamp>",
+        "visibility": "private"
+      },
+      "warnings": []
+    }
+  }
+}

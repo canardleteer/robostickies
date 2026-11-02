@@ -19,7 +19,9 @@ fn sources(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         }
         for entry in fs::read_dir(path).unwrap() {
             let entry = entry.unwrap();
-            if entry.file_name() == "cache" {
+            if entry.path() == root.join(".robostickies/cache")
+                || entry.path() == root.join(".robostickies/private/snapshots")
+            {
                 continue;
             }
             if entry.file_type().unwrap().is_dir() {
@@ -79,6 +81,7 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             for private in [false, true] {
                 let saved = store
                     .create_note(CreateNote {
+                        body_format: None,
                         body: "Migration fixture".into(),
                         tags: vec!["papercut".into()],
                         private: Some(private),
@@ -168,6 +171,7 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             let original = store.get_note(&notes[1].id).unwrap();
             let publication = store
                 .publish_note(PublishNote {
+                    body_format: None,
                     id: original.id.clone(),
                     body: Some("Reviewed migration fixture".into()),
                     tags: None,
@@ -291,6 +295,7 @@ fn user_and_private_version_overrides_are_forbidden_even_when_equal() {
             assert_eq!(
                 store
                     .create_note(CreateNote {
+                        body_format: None,
                         body: "Rejected write".into(),
                         tags: vec![],
                         private: Some(true)
@@ -322,6 +327,7 @@ fn concurrent_upgrades_and_writers_share_the_operation_lock() {
                 } else {
                     store
                         .create_note(CreateNote {
+                            body_format: None,
                             body: format!("Concurrent migration writer {i}"),
                             tags: vec![],
                             private: Some(true),
@@ -360,4 +366,205 @@ fn failed_atomic_upgrade_leaves_config_intact_and_dry_run_still_works() {
     assert_eq!(result.unwrap_err().code, "io");
     assert_eq!(sources(temp.path()), before);
     assert!(store.upgrade(false).unwrap().wrote);
+}
+
+#[test]
+fn deferrals_are_private_target_specific_and_do_not_change_sources_or_public_advice() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::with_user_config(temp.path(), None).unwrap();
+    store.init(InitOptions::default()).unwrap();
+    write_config(&store, None);
+    let config_path = store.directory().join("config.toml");
+    let original = fs::read(&config_path).unwrap();
+    let public_before = serde_json::to_value(store.context(Scope::Public).unwrap()).unwrap();
+    let deferred = store
+        .upgrade_with_options(UpgradeOptions {
+            defer: true,
+            ..UpgradeOptions::default()
+        })
+        .unwrap();
+    assert!(deferred.deferred && !deferred.wrote && deferred.snapshot.is_none());
+    assert_eq!(
+        deferred.upgrade.requirement,
+        robostickies::version::UpgradeRequirement::Should
+    );
+    assert!(store.configuration().unwrap().upgrade.deferred);
+    assert!(store.context(Scope::All).unwrap().upgrade.unwrap().deferred);
+    assert!(store.doctor().unwrap().upgrade.deferred);
+    assert_eq!(fs::read(&config_path).unwrap(), original);
+    assert!(!store.directory().join("private/snapshots").exists());
+    assert_eq!(
+        serde_json::to_value(store.context(Scope::Public).unwrap()).unwrap(),
+        public_before
+    );
+    let preference = store.directory().join("private/upgrade-preferences.toml");
+    for previous in ["v1alpha1", "a-previous-target"] {
+        fs::write(&preference, format!("deferred_target = '{previous}'\n")).unwrap();
+        assert!(!store.configuration().unwrap().upgrade.deferred);
+    }
+    for malformed in [
+        "",
+        "deferred_target = 1",
+        "deferred_target = ''",
+        "unknown = true",
+        "not toml",
+    ] {
+        fs::write(&preference, malformed).unwrap();
+        let config = store.configuration().unwrap();
+        assert!(!config.upgrade.deferred);
+        assert_eq!(config.warnings.len(), 1);
+        assert_eq!(
+            serde_json::to_value(store.context(Scope::Public).unwrap()).unwrap(),
+            public_before
+        );
+    }
+    // Deferral is advisory: an explicit upgrade still runs every registered step.
+    store
+        .upgrade_with_options(UpgradeOptions {
+            defer: true,
+            ..UpgradeOptions::default()
+        })
+        .unwrap();
+    assert!(store.upgrade(false).unwrap().wrote);
+    assert_eq!(store.configuration().unwrap().data_version, CURRENT);
+    assert!(!store.configuration().unwrap().upgrade.deferred);
+    for options in [
+        UpgradeOptions {
+            defer: true,
+            dry_run: true,
+            keep_snapshot: false,
+        },
+        UpgradeOptions {
+            defer: true,
+            dry_run: false,
+            keep_snapshot: true,
+        },
+    ] {
+        assert_eq!(
+            store.upgrade_with_options(options).unwrap_err().code,
+            "invalid_input"
+        );
+    }
+}
+
+#[test]
+fn snapshots_include_hidden_and_private_data_but_exclude_only_generated_subtrees() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::with_user_config(temp.path(), None).unwrap();
+    store.init(InitOptions::default()).unwrap();
+    write_config(&store, None);
+    fs::create_dir_all(store.directory().join("private/nested/cache")).unwrap();
+    fs::write(
+        store.directory().join("private/nested/cache/.hidden"),
+        b"private binary\0fixture",
+    )
+    .unwrap();
+    fs::create_dir_all(store.directory().join("private/snapshots/old")).unwrap();
+    fs::write(
+        store.directory().join("private/snapshots/old/sentinel"),
+        "do not copy old snapshots",
+    )
+    .unwrap();
+    let original = fs::read(store.directory().join("config.toml")).unwrap();
+    assert!(store.upgrade(true).unwrap().snapshot.is_none());
+    let upgrade = store
+        .upgrade_with_options(UpgradeOptions {
+            keep_snapshot: true,
+            ..UpgradeOptions::default()
+        })
+        .unwrap();
+    let snapshot = upgrade.snapshot.unwrap();
+    assert!(upgrade.wrote && snapshot.retained);
+    let location = temp.path().join(snapshot.path);
+    assert_eq!(fs::read(location.join("config.toml")).unwrap(), original);
+    assert_eq!(
+        fs::read(location.join("private/nested/cache/.hidden")).unwrap(),
+        b"private binary\0fixture"
+    );
+    assert!(location.join(".gitignore").is_file());
+    assert!(!location.join("cache").exists());
+    assert!(!location.join("private/snapshots").exists());
+    assert!(
+        store
+            .directory()
+            .join("private/snapshots/old/sentinel")
+            .is_file()
+    );
+    let count = fs::read_dir(store.directory().join("private/snapshots"))
+        .unwrap()
+        .count();
+    assert!(store.upgrade(false).unwrap().snapshot.is_none());
+    assert_eq!(
+        fs::read_dir(store.directory().join("private/snapshots"))
+            .unwrap()
+            .count(),
+        count
+    );
+}
+
+#[test]
+fn failed_source_validation_retains_a_snapshot_and_never_repairs_the_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::with_user_config(temp.path(), None).unwrap();
+    store.init(InitOptions::default()).unwrap();
+    write_config(&store, None);
+    fs::write(
+        store.directory().join("notes/invalid.md"),
+        "malformed synthetic source",
+    )
+    .unwrap();
+    let index = store.directory().join("cache/index.redb");
+    fs::write(&index, "invalid disposable cache").unwrap();
+    let config = fs::read(store.directory().join("config.toml")).unwrap();
+    assert_eq!(store.upgrade(true).unwrap_err().code, "invalid_document");
+    assert!(!store.directory().join("private/snapshots").exists());
+    let error = store.upgrade(false).unwrap_err();
+    assert_eq!(error.code, "invalid_document");
+    let snapshot = error.snapshot.unwrap();
+    assert!(snapshot.retained);
+    assert_eq!(
+        fs::read(temp.path().join(snapshot.path).join("notes/invalid.md")).unwrap(),
+        b"malformed synthetic source"
+    );
+    assert_eq!(
+        fs::read(store.directory().join("config.toml")).unwrap(),
+        config
+    );
+    assert_eq!(fs::read(&index).unwrap(), b"invalid disposable cache");
+}
+
+#[cfg(unix)]
+#[test]
+fn unsafe_snapshot_sources_and_destinations_fail_before_configuration_changes() {
+    use std::os::unix::fs::symlink;
+    for hazard in ["source-link", "destination-link", "hard-link"] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        write_config(&store, None);
+        let outside = temp.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel"), "must stay unchanged").unwrap();
+        match hazard {
+            "source-link" => symlink(&outside, store.directory().join(".hidden-link")).unwrap(),
+            "destination-link" => {
+                symlink(&outside, store.directory().join("private/snapshots")).unwrap()
+            }
+            _ => fs::hard_link(
+                outside.join("sentinel"),
+                store.directory().join(".hard-link"),
+            )
+            .unwrap(),
+        }
+        let original = fs::read(store.directory().join("config.toml")).unwrap();
+        assert_eq!(store.upgrade(false).unwrap_err().code, "io");
+        assert_eq!(
+            fs::read(store.directory().join("config.toml")).unwrap(),
+            original
+        );
+        assert_eq!(
+            fs::read(outside.join("sentinel")).unwrap(),
+            b"must stay unchanged"
+        );
+    }
 }

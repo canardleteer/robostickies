@@ -19,9 +19,10 @@ use uuid::Uuid;
 use crate::{
     config::{self, Configuration},
     document,
-    index::Index,
+    index::{self, Index},
     model::*,
-    version::{self, DataVersion, UpgradeResult},
+    snapshot::Snapshot,
+    version::{self, DataVersion, UpgradeAdvice, UpgradeResult},
 };
 
 /// Brief instructions supplied at MCP discovery, including before initialization.
@@ -71,8 +72,9 @@ always addressed as `private:<name>`; public names cannot shadow them.
 
 Notes live in `notes/<uuid>.md` or `private/notes/<uuid>.md`. YAML frontmatter
 contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
-(`active` or `archived`); the body is Markdown. Additional metadata is retained
-when editing. The files are authoritative; the redb index is disposable.
+(`active` or `archived`); the body is nonempty UTF-8 text, preferably Markdown
+or plain text. Optional `body_format` metadata is advisory and never interprets
+the body. Additional metadata is retained when editing. The files are authoritative; the redb index is disposable.
 
 Edits, archive/unarchive, and publishing (including previews) require the revision
 from the last successful read or save. Use CLI `--if-match` or MCP
@@ -92,6 +94,7 @@ publicly tagged or untagged note local. Private notes stay private when tags
 are removed. `publish <id>` / `publish_note` makes a new public copy, removes
 private tags and additional metadata, and retains the private original.
 Use `--dry-run` / `dry_run: true` to preview, and replace the body if necessary.
+Supply an explicit public body hint with `body_format` (CLI `--body-format`) if needed; source hints are removed.
 Publishing copies the supplied prose; review the text you choose to share.
 
 Browse with visibility (`public`, `private`, `all`), tags, excluded tags, status,
@@ -137,6 +140,9 @@ pub struct Context {
     pub initialized: bool,
     pub data_version: Option<DataVersion>,
     pub upgrade_available: bool,
+    /// Absent until initialization. Public advice ignores private preferences.
+    pub upgrade: Option<UpgradeAdvice>,
+    pub warnings: Vec<String>,
     /// Canonical root selected when the handle was constructed. Omitted in public context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_root: Option<String>,
@@ -223,6 +229,14 @@ impl Store {
     }
 
     fn lock_for_scope(&self, initializing: bool, scope: Scope) -> Result<Guard> {
+        self.lock_mode(initializing, scope, false)
+    }
+
+    fn lock_status(&self, scope: Scope) -> Result<Guard> {
+        self.lock_mode(false, scope, true)
+    }
+
+    fn lock_mode(&self, initializing: bool, scope: Scope, inspection: bool) -> Result<Guard> {
         let config = self.checked("config.toml")?;
         if !initializing && !config.try_exists()? {
             return Err(Error::new(
@@ -245,7 +259,8 @@ impl Store {
                 Ok(()) => {
                     let guard = Guard { _file: file };
                     // Validate while holding the same lock used by upgrades and writers.
-                    self.configuration_for_scope_unlocked(scope)?;
+                    let configuration = self.configuration_for_scope_unlocked(scope)?;
+                    configuration.upgrade.check_access(inspection)?;
                     return Ok(guard);
                 }
                 Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
@@ -522,7 +537,7 @@ impl Store {
             (
                 "resolved",
                 "Fixes verified in the affected environment.",
-                "Keep the papercut tag, add resolved after verifying the fix in its affected environment, record evidence, then archive. For MCP fixes, install the binary and wait for the user's agent restart before verifying through the installed connection. Archived status alone does not prove resolution. Preserve the note's visibility when selecting or creating an outcome definition.\n",
+                "Keep the papercut tag, add resolved after verifying the fix in its affected environment, record evidence, then archive. For MCP fixes, install the binary and verify through a newly started agent MCP connection. Use either a user-confirmed restart of the testing session or a separate fresh agent process with its own MCP server; the current session may continue. Archived status alone does not prove resolution. Preserve the note's visibility when selecting or creating an outcome definition.\n",
             ),
             (
                 "adopted",
@@ -576,7 +591,7 @@ impl Store {
     pub(crate) fn configuration_for_scope(&self, scope: Scope) -> Result<Configuration> {
         self.checked("config.toml")?;
         let _guard = if self.initialized() {
-            Some(self.lock_for_scope(false, scope)?)
+            Some(self.lock_status(scope)?)
         } else {
             None
         };
@@ -593,23 +608,130 @@ impl Store {
     /// or unsupported versions or forbidden overrides, and lock or I/O failures.
     /// Atomic replacement prevents partially written configuration files.
     pub fn upgrade(&self, dry_run: bool) -> Result<UpgradeResult> {
-        let _guard = self.lock(false)?;
-        let source_version = self.configuration_unlocked()?.data_version;
-        let wrote = source_version.upgrade_available() && !dry_run;
-        if source_version.upgrade_available() {
-            let path = self.checked("config.toml")?;
-            let original = fs::read_to_string(&path)?;
-            let migrated = version::migrate(&original, source_version)?;
-            if wrote {
-                document::atomic_write(&path, &migrated, true)?;
-            }
+        self.upgrade_with_options(UpgradeOptions {
+            dry_run,
+            ..UpgradeOptions::default()
+        })
+    }
+
+    /// Explicitly migrate, preview, or defer an optional upgrade. Changes receive a
+    /// verified private snapshot before the first write. Failed migration/validation
+    /// retains that copy without automatic rollback; successful source validation
+    /// permits cleanup unless retention was requested. Cache repair is separate.
+    ///
+    /// # Errors
+    /// Returns input/configuration/lock errors before migration. Snapshot failures
+    /// leave authoritative data unchanged. Later failures include the retained
+    /// snapshot path. Unsafe filesystem entries or Git exclusions are refused.
+    pub fn upgrade_with_options(&self, options: UpgradeOptions) -> Result<UpgradeResult> {
+        if options.defer && (options.dry_run || options.keep_snapshot) {
+            return Err(Error::new(
+                "invalid_input",
+                "defer conflicts with dry_run and keep_snapshot",
+            ));
         }
-        Ok(UpgradeResult {
+        let _guard = self.lock_status(Scope::All)?;
+        let configuration = self.configuration_unlocked()?;
+        let source_version = configuration.data_version;
+        let mut result = UpgradeResult {
             source_version,
             target_version: version::CURRENT,
-            wrote,
-            dry_run,
-        })
+            wrote: false,
+            dry_run: options.dry_run,
+            deferred: false,
+            upgrade: configuration.upgrade,
+            snapshot: None,
+            warnings: configuration.warnings,
+        };
+        if !source_version.upgrade_available() {
+            return Ok(result);
+        }
+        if options.defer {
+            result.upgrade.ensure_usable()?;
+            let path = self.checked(config::PREFERENCES)?;
+            self.assert_upgrade_ignored(Path::new(config::PREFERENCES))?;
+            document::atomic_write(
+                &path,
+                &format!("deferred_target = \"{}\"\n", version::CURRENT),
+                true,
+            )?;
+            result.deferred = true;
+            result.upgrade = UpgradeAdvice::new(source_version, Some(version::CURRENT.as_str()));
+            // A successfully replaced malformed preference no longer needs a warning.
+            result.warnings.clear();
+            return Ok(result);
+        }
+        let path = self.checked("config.toml")?;
+        let original = fs::read_to_string(&path)?;
+        if options.dry_run {
+            version::apply_migrations(&original, source_version, config::validate_migration)?;
+            index::validate_sources(&self.directory())?;
+            return Ok(result);
+        }
+        let snapshot = Snapshot::create(&self.directory(), |relative| {
+            self.assert_upgrade_ignored(relative)
+        })?;
+        let migration = (|| {
+            index::validate_sources(&self.directory())?;
+            version::apply_migrations(&original, source_version, |migrated, target| {
+                config::validate_migration(migrated, target)?;
+                document::atomic_write(&path, migrated, true)?;
+                let actual = self.configuration_unlocked()?;
+                if actual.data_version.as_str() != target {
+                    return Err(Error::new(
+                        "configuration",
+                        "Saved migration target did not validate",
+                    ));
+                }
+                index::validate_sources(&self.directory())
+            })?;
+            Ok(())
+        })();
+        migration.map_err(|error: Error| error.with_snapshot(snapshot.result.clone()))?;
+        let (snapshot, warnings) = snapshot.finish(options.keep_snapshot);
+        result.wrote = true;
+        result.snapshot = Some(snapshot);
+        result.warnings.extend(warnings);
+        result.upgrade = UpgradeAdvice::new(version::CURRENT, None);
+        Ok(result)
+    }
+
+    fn assert_upgrade_ignored(&self, relative: &Path) -> Result<()> {
+        let in_git = Command::new("git")
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(&self.repo)
+            .output()?;
+        if !in_git.status.success() {
+            // A directory without Git has no public tracking surface.
+            if in_git.status.code() == Some(128)
+                && fs::symlink_metadata(self.repo.join(".git"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            {
+                return Ok(());
+            }
+            return Err(Error::new(
+                "privacy",
+                "Cannot verify private upgrade Git exclusions",
+            ));
+        }
+        let path = Path::new(".robostickies").join(relative);
+        let tracked = Command::new("git")
+            .args(["ls-files", "-z", "--"])
+            .arg(&path)
+            .current_dir(&self.repo)
+            .output()?;
+        let ignored = Command::new("git")
+            .args(["check-ignore", "--no-index", "-q", "--"])
+            .arg(&path)
+            .current_dir(&self.repo)
+            .output()?;
+        if !tracked.status.success() || !tracked.stdout.is_empty() || !ignored.status.success() {
+            return Err(Error::new(
+                "privacy",
+                "Private upgrade state must be untracked and ignored by Git; restore private exclusions before upgrading",
+            ));
+        }
+        Ok(())
     }
 
     fn create_tag_unlocked(&self, input: CreateTag) -> Result<Tag> {
@@ -688,12 +810,9 @@ impl Store {
         } else {
             Visibility::Public
         };
-        let note = self.save_new(self.new_note(
-            input.body,
-            input.tags,
-            visibility,
-            NoteStatus::Active,
-        )?)?;
+        let mut note = self.new_note(input.body, input.tags, visibility, NoteStatus::Active)?;
+        document::set_body_format(&mut note.metadata, input.body_format.as_deref(), false)?;
+        let note = self.save_new(note)?;
         Ok(SavedNote {
             note,
             warnings: self.refresh_warning(),
@@ -714,6 +833,11 @@ impl Store {
         let _guard = self.lock(false)?;
         let (mut note, original) = self.read_note(&input.id)?;
         check_revision(&note, &input.expected_revision)?;
+        document::set_body_format(
+            &mut note.metadata,
+            input.body_format.as_deref(),
+            input.clear_body_format,
+        )?;
         if note.visibility == Visibility::Private && input.private == Some(false) {
             return Err(Error::new(
                 "privacy",
@@ -808,12 +932,13 @@ impl Store {
                 "A public copy cannot have private tags",
             ));
         }
-        let note = self.new_note(
+        let mut note = self.new_note(
             input.body.unwrap_or(source.body),
             tags,
             Visibility::Public,
             source.status,
         )?;
+        document::set_body_format(&mut note.metadata, input.body_format.as_deref(), false)?;
         let (note, warnings) = if input.dry_run {
             let text = document::render_note(&note)?;
             (
@@ -907,6 +1032,8 @@ impl Store {
             initialized: self.initialized(),
             data_version: None,
             upgrade_available: false,
+            upgrade: None,
+            warnings: vec![],
             repository_root: (scope != Scope::Public)
                 .then(|| self.repo.to_string_lossy().into_owned()),
             guidance: GUIDE.into(),
@@ -919,10 +1046,19 @@ impl Store {
         if !context.initialized {
             return Ok(context);
         }
-        let _guard = self.lock_for_scope(false, scope)?;
+        let _guard = self.lock_status(scope)?;
         let configuration = self.configuration_for_scope_unlocked(scope)?;
         context.data_version = Some(configuration.data_version);
         context.upgrade_available = configuration.upgrade_available;
+        context.upgrade = Some(configuration.upgrade.clone());
+        context.warnings = configuration.warnings.clone();
+        // Status remains accessible at a safety boundary without interpreting sources.
+        if !configuration.data_version.usable() {
+            if scope != Scope::Public {
+                context.configuration = Some(configuration);
+            }
+            return Ok(context);
+        }
         let index = self.index(false)?;
         let tags = index.tags(scope, None).map_err(cache_error)?;
         context.tags = tags.iter().map(TagSummary::from).collect();
@@ -952,7 +1088,20 @@ impl Store {
 
     /// Validate source files and configuration. Check Git tracking and ignore rules.
     pub fn doctor(&self) -> Result<Health> {
-        let _guard = self.lock(false)?;
+        let _guard = self.lock_status(Scope::All)?;
+        let configuration = self.configuration_unlocked()?;
+        if !configuration.data_version.usable() {
+            return Ok(Health {
+                data_version: configuration.data_version,
+                upgrade_available: configuration.upgrade_available,
+                upgrade: configuration.upgrade,
+                warnings: configuration.warnings,
+                healthy: false,
+                notes: 0,
+                tags: 0,
+                diagnostics: vec![],
+            });
+        }
         let index = self.index(false)?;
         self.health(index)
     }
@@ -999,6 +1148,8 @@ impl Store {
         Ok(Health {
             data_version: configuration.data_version,
             upgrade_available: configuration.upgrade_available,
+            upgrade: configuration.upgrade,
+            warnings: configuration.warnings,
             healthy: diagnostics.is_empty(),
             notes,
             tags,
@@ -1171,6 +1322,7 @@ mod failure_tests {
         let store = Store::with_user_config(temp.path(), None).unwrap();
         assert!(!store.configuration().unwrap().upgrade_available);
         let create = CreateNote {
+            body_format: None,
             body: "Absent store fixture".into(),
             tags: vec![],
             private: Some(true),
@@ -1181,6 +1333,7 @@ mod failure_tests {
             store.update_note(UpdateNote::default()).unwrap_err(),
             store
                 .publish_note(PublishNote {
+                    body_format: None,
                     id: "invalid".into(),
                     body: None,
                     tags: None,
@@ -1225,6 +1378,7 @@ mod failure_tests {
             .unwrap();
         let public = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Public fixture".into(),
                 tags: vec![],
                 private: Some(false),
@@ -1233,6 +1387,7 @@ mod failure_tests {
             .note;
         let local = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Local fixture".into(),
                 tags: vec![tag.name.clone()],
                 private: Some(true),
@@ -1265,6 +1420,7 @@ mod failure_tests {
             );
         }
         let request = |note: &Note, tags| PublishNote {
+            body_format: None,
             id: note.id.clone(),
             body: None,
             tags,
@@ -1309,6 +1465,7 @@ mod input_failure_tests {
         assert_eq!(
             store
                 .create_note(CreateNote {
+                    body_format: None,
                     body: " ".into(),
                     tags: vec![],
                     private: Some(true)
@@ -1320,6 +1477,7 @@ mod input_failure_tests {
         assert_eq!(
             store
                 .create_note(CreateNote {
+                    body_format: None,
                     body: "Rejected tag fixture".into(),
                     tags: vec!["undefined".into()],
                     private: Some(true)
@@ -1343,6 +1501,7 @@ mod input_failure_tests {
         );
         let note = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Guarded fixture".into(),
                 tags: vec![],
                 private: Some(true),
@@ -1374,6 +1533,7 @@ mod input_failure_tests {
             assert_eq!(
                 store
                     .publish_note(PublishNote {
+                        body_format: None,
                         id: id.into(),
                         expected_revision: revision.into(),
                         dry_run: true,
@@ -1404,6 +1564,7 @@ mod input_failure_tests {
             assert_eq!(
                 store
                     .publish_note(PublishNote {
+                        body_format: None,
                         id: note.id.clone(),
                         expected_revision: note.revision.clone(),
                         dry_run: true,
@@ -1479,6 +1640,7 @@ mod filesystem_failure_tests {
         assert_eq!(fs::read_to_string(&agents).unwrap(), broken);
         let note = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Filesystem fixture".into(),
                 tags: vec![],
                 private: Some(true),
