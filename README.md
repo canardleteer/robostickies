@@ -53,11 +53,14 @@ to use it without adding tracked integration files.
 - [CLI access](docs/usage/getting-started.md) works from any directory in a
   repository, with file or stdin input and optional JSON output.
 - [Build identification](docs/usage/getting-started.md#version-and-build-identification)
-  reports the package version, commit, source state, target, compiler, and profile.
+  reports compiled version, commit, source state, target, compiler, and profile
+  through the CLI and callable MCP `version` tool.
 - [Notes and tags](docs/usage/getting-started.md#notes-and-tags) capture friction
   and useful successes, with custom tags and startup guidance.
 - [Markdown storage](docs/usage/storage.md) keeps notes in editable files that
   can be shared and tracked in Git.
+- [Body hints](docs/usage/getting-started.md#bodies-and-optional-format-hints)
+  describe nonempty UTF-8 text with optional advisory metadata.
 - [Private notes and publishing](docs/usage/privacy-and-configuration.md#private-notes-and-publication)
   keep local observations ignored and publish reviewed copies.
 - [Configuration](docs/usage/privacy-and-configuration.md#configuration) controls
@@ -74,7 +77,8 @@ to use it without adding tracked integration files.
 - [Diagnostics and cache recovery](docs/usage/maintenance.md) validate note
   sources and Git privacy protections, and rebuild the disposable index.
 - [Store versions and upgrades](docs/usage/upgrades.md) report legacy formats
-  and migrate the shared configuration explicitly while preserving Markdown.
+  with structured advice and optional deferral, and migrate explicitly with
+  verified private recovery snapshots.
 - [Development tasks](docs/usage/development.md) provide workspace checks,
   unused-dependency checks, coverage reports, and profiling against synthetic notes.
 

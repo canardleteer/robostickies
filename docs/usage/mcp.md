@@ -119,6 +119,7 @@ entirely, along with personal configuration.
 
 | MCP tools | Purpose |
 | --- | --- |
+| `version` | Compiled identity of the running server; empty arguments and no store reads |
 | `get_context`, `get_config` | Guidance and effective defaults |
 | `create_note`, `get_note`, `update_note` | Record and maintain notes; archive through `status` |
 | `list_notes` | Browse and search using shared filters |
@@ -126,12 +127,22 @@ entirely, along with personal configuration.
 | `create_tag`, `list_tags`, `get_tag` | Define tags and explore short/full guidance |
 | `publish_note` | Immediately copy or preview a private note as public |
 | `init_store`, `validate_store`, `rebuild_index` | Initialize and maintain the store |
+| `upgrade_store` | Preview, apply, or defer an explicit store upgrade with recovery snapshots |
 
 Creation tools accept `private: true` or `false`; omission uses the relevant
 defaults. Private tag references still force private note storage. `update_note`
 and `publish_note` require `expected_revision`; get/create/update responses supply
 the current revision. `publish_note` defaults to immediate copying, with
 `dry_run: true` for previews. Tools return structured results and tool errors.
+
+Note creation, updates, and publication accept optional `body_format` strings.
+Updates also accept `clear_body_format: true`; set and clear conflict. Hints
+appear in `metadata.body_format` and never interpret the body. Publication drops
+the source hint and accepts a public hint only when explicitly supplied.
+
+Context, configuration, validation, and upgrade results include structured
+`upgrade` advice. `upgrade_store` accepts `dry_run`, `defer`, and `keep_snapshot`;
+see [upgrades and recovery](upgrades.md) for safety and retention rules.
 
 Resources `robostickies://context`, `robostickies://guidance`,
 `robostickies://tags`, and `robostickies://config` offer read access as well.

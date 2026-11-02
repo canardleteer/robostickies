@@ -30,7 +30,7 @@ cargo install --path . --locked
 `robostickies --version` adds labeled build details:
 
 ```text
-robostickies 0.1.1
+robostickies <version>
 Commit: <full commit hash or unknown>
 Source state: <clean, dirty, or unknown>
 Target: <target triple>
@@ -46,7 +46,12 @@ enclosing consumer checkout never supplies the package's source identity.
 
 Both flags work without Git, outside a repository, and without opening a note
 store. Output omits builder paths and timestamps. It includes no usernames or hostnames.
-MCP advertises the plain package SemVer. Package versions are separate from
+MCP advertises the plain package SemVer during initialization. Its read-only
+`version` tool accepts `{}` and returns `name`, `version`, `commit`, `source_state`,
+`target`, `compiler`, and `profile` for the running server. It uses the same
+compiled identity as the CLI and reads no repository files. This identifies a
+long-running server even after the executable on disk has been replaced.
+Package versions are separate from
 [configuration and stored-data versions](upgrades.md#format-version-policy).
 
 ## Initialize a repository
@@ -92,5 +97,32 @@ Predefined tags are optional. Notes can use multiple defined tags or no
 tags. Edit tag guidance directly in its Markdown file. Definitions require a
 short YAML `topic`; `read_on_start: true` includes full guidance in session
 context. Additional frontmatter is retained during note edits, including comments.
+
+In the example, `tooling` is the tag identifier used by `--tag` and `tags get`.
+The topic, `Tooling and development workflow`, is a short catalog description.
+The body is longer Markdown guidance explaining how to use that tag. Private
+definitions use qualified identifiers such as `private:tooling`.
+
+## Bodies and optional format hints
+
+Note bodies are nonempty UTF-8 text. Markdown and plain text are preferred;
+other text documents are accepted without interpreting or executing them.
+Optionally describe the body with an advisory hint:
+
+```sh
+robostickies add --private --file observation.yaml --body-format yaml
+robostickies update <uuid> --body-format text --if-match <revision>
+robostickies update <uuid> --clear-body-format --if-match <revision>
+```
+
+`markdown`, `text`, and `yaml` are recommended hints. Other nonblank strings are
+accepted. The response exposes the hint as `metadata.body_format`; it is stored
+as additional frontmatter rather than a required field. Omitted edit hints retain
+existing metadata, and setting and clearing together is an error. Legacy
+non-string values remain readable and survive unrelated edits; reconcile those
+values in the source before using the hint interface to set or clear them.
+
+Publishing strips the source hint with other private metadata. Supply
+`publish --body-format <hint>` explicitly to describe a new public copy.
 
 [All usage guides](README.md).

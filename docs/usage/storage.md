@@ -9,6 +9,8 @@
   notes/<uuid>.md
   private/
     config.toml             # optional repository-local defaults
+    upgrade-preferences.toml # optional local deferral, compatible with older tools
+    snapshots/<unique-id>/  # temporary or explicitly retained recovery copies
     tags/<name>.md
     notes/<uuid>.md
   cache/                    # ignored redb index, recovery file, operation lock
@@ -43,6 +45,15 @@ shared edits; the index is rebuilt from current files after edits or checkouts.
 
 Edits retain custom frontmatter metadata and comments. They preserve the
 file's LF or CRLF convention, including replacement body text.
+
+Bodies contain nonempty UTF-8 text; Markdown or plain text is preferred. An
+optional string `body_format: markdown` in frontmatter is an advisory hint,
+exposed as `metadata.body_format`. It does not select a parser or execute the
+body. Unknown strings and legacy non-string metadata remain readable. See
+[body hints](getting-started.md#bodies-and-optional-format-hints) for editing rules.
+
+The `tooling` filename is the tag identifier. Its `topic` is the short catalog
+description, and its body supplies longer Markdown guidance.
 
 The shared configuration holds the repository's sole `data_version`. Markdown
 documents have no version field, and the disposable index uses a separate cache

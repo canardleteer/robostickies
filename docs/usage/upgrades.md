@@ -1,8 +1,7 @@
 # Store data versions and upgrades
 
 The shared `.robostickies/config.toml` is the only stored authority for the
-repository's data version. It covers public and private notes and tag
-definitions together. New stores write:
+repository's data version. It covers both namespaces. New stores write:
 
 ```toml
 format_version = 1
@@ -10,44 +9,99 @@ data_version = "v1alpha2"
 ```
 
 An absent `data_version` means `v1alpha1`. Both versions remain readable and
-writable. Successful CLI commands print an upgrade notice on stderr for legacy stores;
-JSON note responses retain their existing shape. MCP reports `data_version`
-and `upgrade_available` in `get_context`, `get_config`, and `validate_store`.
-The corresponding CLI commands are `context`, `config show`, and `doctor`.
+writable. Installing, opening, or initializing an existing store never migrates
+it silently. Optional body hints use existing additional metadata and require
+neither a version bump nor a bulk rewrite.
 
-Preview and apply an explicit upgrade:
+## Upgrade advice and local deferral
+
+`context`, `config show`, `doctor`, and `upgrade` (and their MCP counterparts)
+return structured `upgrade` advice with source/target versions, `requirement`,
+`can_upgrade`, `deferred`, and a message:
+
+| Requirement | Meaning |
+| --- | --- |
+| `none` | The store is current. |
+| `should` | The older representation is safely usable. Users SHOULD upgrade and MAY invoke the upgrade tool. |
+| `must` | A recognized representation cannot be used safely. Users MUST upgrade before ordinary operations; status and supported migration operations remain available. |
+
+Both representations registered in this RC are safely usable. A future
+upgrade-only representation must declare its safety boundary and migration.
+Unsupported newer formats require compatible newer tooling: they are never
+reinterpreted as legacy or downgraded.
+
+Successful ordinary CLI commands retain upgrade notices on stderr. Ordinary
+note-response envelopes stay unchanged. To decline the current optional target:
+
+```sh
+robostickies upgrade --defer
+```
+
+In MCP, call `upgrade_store` with `{"defer": true}`. This records only
+`deferred_target` in the separate ignored `private/upgrade-preferences.toml`;
+it adds no configuration keys that older executables would reject. It suppresses
+optional local reminders for that target. A different target restores the
+recommendation. The actual source version and `upgrade_available` stay unchanged.
+An explicit upgrade still runs, including every required intermediate migration.
+Deferral never suppresses mandatory safety errors. It conflicts with `dry_run`
+and `keep_snapshot`.
+
+Malformed or unreadable preferences produce a local warning and leave
+recommendations enabled. Public context and public queries ignore private
+preferences entirely, including their warnings.
+
+## Explicit migration and recovery snapshots
 
 ```sh
 robostickies upgrade --dry-run
 robostickies upgrade
-robostickies upgrade --json
+robostickies upgrade --keep-snapshot --json
 ```
 
-In MCP, call `upgrade_store` with `{"dry_run": true}` for a preview, or `{}`
-to apply it. Results contain `source_version`, `target_version`, `wrote`, and
-`dry_run`. Repeating an upgrade returns `wrote: false` after the store reaches
-the current version. Running `init` on an existing store does not upgrade it.
+MCP `upgrade_store` accepts `dry_run`, `defer`, and `keep_snapshot`, all defaulting
+to false. Results retain `source_version`, `target_version`, `wrote`, and `dry_run`,
+and add `deferred`, `upgrade`, `snapshot`, and `warnings`. `snapshot` is null when
+no copy was needed; otherwise it contains a repository-relative `path` and final
+`retained` outcome. CLI snapshot announcements and cleanup warnings use stderr.
 
-The `v1alpha1` to `v1alpha2` migration changes only the shared version field.
-It preserves other configuration content and formatting, note and tag bytes,
-IDs, revisions, nested metadata, comments, privacy settings, customized
-guidance, and agent files. Cache rebuilding is independent of data migration.
-Version validation and atomic replacement use the same operation lock as
-ordinary readers and writers. Dry runs leave source files unchanged.
+Before an upgrade changes authoritative data, it copies the store to a unique
+`.robostickies/private/snapshots/<unique-id>/`. Hidden files and private contents
+are included. Only the root disposable `cache/` and existing `private/snapshots/`
+subtree are excluded; similarly named directories elsewhere are copied. Git
+exclusions are checked before copying. Symlinks, special files, and hard-linked
+files are refused. The copy's inventory and file hashes are validated against
+unchanged sources before migration starts.
 
-User configuration and `.robostickies/private/config.toml` cannot set
-`data_version`, even to the shared value. Documents receive no version field.
-Public reads validate the shared configuration and use its version status.
-Local layer errors remain local; they cannot change public review results or
-appear in public diagnostics. Local inspection and writes validate all layers.
-The numeric `format_version` checks configuration interpretation independently of the
-data version; cache generations remain an internal index detail. Malformed or
-unsupported versions fail with `configuration` before rewriting sources.
+Current stores need no snapshot. Previewing or deferring an upgrade also creates none. Successful
+migration and source validation remove the snapshot unless `keep_snapshot` was
+requested. A snapshot failure leaves authoritative data unchanged; partial copies
+are reported as incomplete or unverified and retained for inspection. Migration or
+validation failure stops and retains the recovery copy; errors report its path.
+There is no automatic rollback. Inspect that copy and the reported error before
+manually restoring authoritative files under the operation lock. If cleanup
+fails, migration remains successful and reports a retained-snapshot warning.
 
-Upgrade an initialized store using a compatible executable. An absent store
-must be initialized first. Restart existing MCP processes after installing new
-code before relying on its behavior. See [shared editing](shared-editing.md)
-for the limits of the operation lock.
+Migrations run in registered order and validate every step under the existing
+operation lock, without reacquiring it. Authoritative source validation does not
+open or repair redb; cache damage cannot decide migration success. Repair the
+disposable cache separately with `reindex`.
+
+The existing `v1alpha1` → `v1alpha2` step changes only the shared version marker
+through atomic configuration replacement. It preserves other configuration
+bytes, note/tag bytes, IDs, privacy, revisions, custom metadata, comments, newline
+conventions, customized guidance, and agent files. This RC introduces no
+multi-file data-format migration. Future incompatible transformations must
+provide fail-closed recovery before registration.
+
+User configuration and `private/config.toml` cannot set `data_version`, even to
+the shared value. Public reads validate only the shared configuration; local
+layer errors remain local. The numeric `format_version` governs configuration
+interpretation separately, and cache generations remain internal index details.
+Malformed or unsupported versions fail before rewriting sources.
+
+Upgrade an initialized store using compatible tooling. Restart MCP processes
+after installing new code before relying on its behavior. See
+[shared editing](shared-editing.md) for operation-lock limits.
 
 ## Format version policy
 
