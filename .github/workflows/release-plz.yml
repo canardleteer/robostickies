@@ -187,6 +187,12 @@ jobs:
             exit 0
           fi
           echo 'run=true' >> "$GITHUB_OUTPUT"
+      - name: Attach checked commit to main
+        if: steps.update.outputs.run == 'true'
+        id: base
+        env:
+          CHECKED_SHA: ${{ needs.checked-main.outputs.sha }}
+        run: git switch --force-create main "$CHECKED_SHA"
       - name: Create repository installation token
         if: steps.update.outputs.run == 'true'
         id: app-token

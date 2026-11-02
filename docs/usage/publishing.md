@@ -22,7 +22,8 @@ this repository's `main`. Pull request and fork runs are rejected. The workflow
 validates the triggering SHA, then uses the App to dispatch `release-plz.yml` on
 `main` with that SHA. Only the dispatched run publishes and prepares a PR; it
 checks out the validated commit with full history and rechecks its main-push
-results. This uses a `workflow_dispatch` identity because crates.io
+results. PR generation attaches that commit to local `main`, as required by
+release-plz. This uses a `workflow_dispatch` identity because crates.io
 [rejects Trusted Publishing from `workflow_run` events](https://blog.rust-lang.org/2026/01/21/crates-io-development-update/#blocked-triggers).
 
 Manual dispatch is also limited to `main` and requires successful main-push
