@@ -129,8 +129,9 @@ Canonical `cargo test` and `cargo xtask check` run the `insta` baselines in
 `tests/snapshots/`. They cover CLI help, selected success/error envelopes, and
 actual MCP tools/resources with schemas and annotations. Fixtures are synthetic;
 only the named contract snapshot files enter the published package.
-Help comparisons trim trailing terminal padding; dynamic IDs, revisions, and
-timestamps in selected envelopes use explicit placeholders.
+Help comparisons normalize the platform executable suffix and trailing terminal
+padding; dynamic IDs, revisions, and timestamps in selected envelopes use explicit
+placeholders.
 
 When a comparison fails, inspect the proposed `.snap.new` file, classify the
 Rust, CLI, and MCP compatibility impact in the review, then deliberately accept

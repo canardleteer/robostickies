@@ -50,10 +50,16 @@ async fn cli_help_contract() {
                 String::from_utf8(output.stdout).unwrap()
             ));
         }
-        // Clap pads undocumented argument rows; terminal padding is not a contract.
+        // Normalize terminal padding and the platform's executable suffix only.
         let help = help
             .lines()
             .map(str::trim_end)
+            .map(|line| {
+                line.strip_prefix("Usage: robostickies.exe ").map_or_else(
+                    || line.to_owned(),
+                    |usage| format!("Usage: robostickies {usage}"),
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         insta::assert_snapshot!("cli_help", help);
