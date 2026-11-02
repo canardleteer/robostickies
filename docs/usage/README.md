@@ -5,7 +5,7 @@ the guide for the task:
 
 | Guide | Topics |
 | --- | --- |
-| [Install and start](getting-started.md) | Set up the CLI, inspect build identity, and record your first notes |
+| [Install and start](getting-started.md) | Inspect CLI/MCP build identity, distinguish tag identifiers/topics/guidance, and add text with optional body hints |
 | [Markdown storage](storage.md) | Edit source files and share them in Git |
 | [Private notes and configuration](privacy-and-configuration.md) | Keep the store local or publish reviewed notes |
 | [Search and review](search-and-review.md) | Select matching notes and prepare a complete review |
@@ -13,7 +13,7 @@ the guide for the task:
 | [Resolution and adoption](outcomes.md) | Record verification and adoption outcomes |
 | [MCP server](mcp.md) | Connect an agent and configure tool approvals |
 | [Diagnostics and cache recovery](maintenance.md) | Validate sources and recover the index |
-| [Store versions and upgrades](upgrades.md) | Inspect data versions and migrate an existing store |
-| [Development tasks](development.md) | Run workspace checks, coverage, and profiling |
+| [Store versions and upgrades](upgrades.md) | Inspect upgrade advice, defer optional targets, and migrate with recovery snapshots |
+| [Development tasks](development.md) | Run checks, review interface snapshots and per-file coverage, and profile |
 
 For work on robostickies itself, see the [development guide](development.md).

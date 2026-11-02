@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0-rc.1](https://github.com/canardleteer/robostickies/compare/v0.1.1...v0.2.0-rc.1) - 2026-11-02
+
+- Add advisory body-format hints to note creation, editing, and publication.
+  Preserve existing metadata and retain both supported store versions.
+- Add a read-only MCP `version` tool sharing the CLI's compiled build identity.
+- Add structured upgrade advice, private target-specific deferrals, verified
+  recovery snapshots, and ordered migration validation independent of the cache.
+- Clarify tag identifiers, topics, guidance, and nonempty UTF-8 note bodies.
+- Reject nonregular configuration and advisory-preference files before reading,
+  and describe both supported fresh-MCP verification routes in new-store guidance.
+- Review CLI and MCP contracts through synthetic interface snapshots. Document
+  per-file coverage targets and separate interface compatibility from migrations.
+
+Public Rust input/result/error structs gain fields; struct-literal callers may need updates. CLI and MCP additions
+are optional; upgrade/status responses gain advisory fields. There is no new
+configuration or stored-data version, and no automatic migration.
+
 ## [0.1.1](https://github.com/canardleteer/robostickies/compare/v0.1.1-rc.2...v0.1.1) - 2026-11-02
 
 ### Other

@@ -80,7 +80,10 @@ workflow. The optional fresh-agent `mcp-test` evaluator is not adopted; add it
 only by user request, alongside the existing self-drive workflow.
 
 Run `cargo xtask coverage` locally as a merge request nears completion. Review
-per-file coverage and meaningful failure paths; coverage is not a CI gate.
+per-file coverage and meaningful failure paths. Aim for at least 95% line coverage
+in each production file. Lower coverage is acceptable when reaching the target
+would require low-value tests; explain the uncovered behavior and justification
+in the review. Coverage remains local and is not a percentage CI gate.
 Linux is the supported platform. macOS and Windows checks are informative;
 support for either platform requires explicit adoption.
 

@@ -117,8 +117,26 @@ The report includes build scripts, application, xtask, and profiling-example
 sources. Test directories, dependencies, and generated build artifacts are excluded.
 
 Run coverage locally as a merge request nears completion and inspect each
-production source file. Reports stay local; CI neither uploads coverage nor
+production source file. Aim for at least 95% line coverage per production file,
+including useful failure paths. A lower result is acceptable when additional
+tests would add little assurance: identify the uncovered behavior and explain the
+exception in the review. Reports stay local; CI neither uploads coverage nor
 enforces a percentage. Linux coverage does not measure macOS or Windows code.
+
+## Interface snapshots
+
+Canonical `cargo test` and `cargo xtask check` run the `insta` baselines in
+`tests/snapshots/`. They cover CLI help, selected success/error envelopes, and
+actual MCP tools/resources with schemas and annotations. Fixtures are synthetic;
+only the named contract snapshot files enter the published package.
+Help comparisons trim trailing terminal padding; dynamic IDs, revisions, and
+timestamps in selected envelopes use explicit placeholders.
+
+When a comparison fails, inspect the proposed `.snap.new` file, classify the
+Rust, CLI, and MCP compatibility impact in the review, then deliberately accept
+the intended baseline with `cargo insta review` (install `cargo-insta` if needed).
+Never auto-accept baselines locally or in CI. Keep behavioral regression tests:
+snapshots reveal changes but do not prove they are correct.
 
 To use [Tarpaulin](https://github.com/xd009642/tarpaulin#readme):
 

@@ -43,8 +43,9 @@ always addressed as `private:<name>`; public names cannot shadow them.
 
 Notes live in `notes/<uuid>.md` or `private/notes/<uuid>.md`. YAML frontmatter
 contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
-(`active` or `archived`); the body is Markdown. Additional metadata is retained
-when editing. The files are authoritative; the redb index is disposable.
+(`active` or `archived`); the body is nonempty UTF-8 text, preferably Markdown
+or plain text. Optional `body_format` metadata is advisory and never interprets
+the body. Additional metadata is retained when editing. The files are authoritative; the redb index is disposable.
 
 Edits, archive/unarchive, and publishing (including previews) require the revision
 from the last successful read or save. Use CLI `--if-match` or MCP
@@ -65,6 +66,7 @@ publicly tagged or untagged note local. Private notes stay private when tags
 are removed. `publish <id>` / `publish_note` makes a new public copy, removes
 private tags and additional metadata, and retains the private original.
 Use `--dry-run` / `dry_run: true` to preview, and replace the body if necessary.
+Supply an explicit public body hint with `body_format` (CLI `--body-format`) if needed; source hints are removed.
 Publishing copies the supplied prose; review the text you choose to share.
 
 Browse with visibility (`public`, `private`, `all`), tags, excluded tags, status,
