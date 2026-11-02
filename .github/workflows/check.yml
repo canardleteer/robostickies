@@ -30,9 +30,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install stable Rust with formatting and lint tools
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-      - name: Select stable Rust
-        run: rustup default stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - name: Restore Rust dependencies and installed tools
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: workspace-${{ runner.os }}-${{ runner.arch }}
+          workspaces: |
+            . -> target
+            . -> target/xtask
+          cache-bin: true
+          save-if: ${{ github.repository == 'canardleteer/robostickies' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Install dependency checker
         run: cargo install --locked cargo-machete --version 0.9.2
       - name: Check workspace
@@ -43,5 +53,5 @@ jobs:
           cargo package --locked --package robostickies
           version=$(cargo metadata --locked --no-deps --format-version 1 | python -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "robostickies"))')
           manifest="target/package/robostickies-$version/Cargo.toml"
-          cargo run --locked --manifest-path "$manifest" -- -V
-          cargo run --locked --manifest-path "$manifest" -- --version
+          cargo run --locked --manifest-path "$manifest" --target-dir "$GITHUB_WORKSPACE/target" -- -V
+          cargo run --locked --manifest-path "$manifest" --target-dir "$GITHUB_WORKSPACE/target" -- --version
