@@ -8,6 +8,9 @@ use toml_edit::ImDocument;
 
 use crate::{Error, Result};
 
+/// Configuration interpretation version; governed separately from stored data.
+pub const FORMAT_VERSION: u32 = 1;
+
 /// Supported source formats for both public and private repository data.
 /// Individual Markdown documents and disposable caches have no data version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

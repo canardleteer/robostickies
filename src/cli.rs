@@ -12,7 +12,7 @@ use crate::{Store, model::*};
 
 /// Repository notes for humans and agents.
 #[derive(Debug, Parser)]
-#[command(version, about, arg_required_else_help = true)]
+#[command(version, long_version = crate::build_info::long_version(), about, arg_required_else_help = true)]
 pub struct Cli {
     /// Directory override; defaults to the Git root containing the startup CWD,
     /// or that CWD outside Git.

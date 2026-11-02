@@ -5,7 +5,7 @@ the guide for the task:
 
 | Guide | Topics |
 | --- | --- |
-| [Install and start](getting-started.md) | Set up the CLI and record your first notes |
+| [Install and start](getting-started.md) | Set up the CLI, inspect build identity, and record your first notes |
 | [Markdown storage](storage.md) | Edit source files and share them in Git |
 | [Private notes and configuration](privacy-and-configuration.md) | Keep the store local or publish reviewed notes |
 | [Search and review](search-and-review.md) | Select matching notes and prepare a complete review |
@@ -15,5 +15,6 @@ the guide for the task:
 | [Diagnostics and cache recovery](maintenance.md) | Validate sources and recover the index |
 | [Store versions and upgrades](upgrades.md) | Inspect data versions and migrate an existing store |
 | [Development tasks](development.md) | Run workspace checks, coverage, and profiling |
+| [Publishing](publishing.md) | Publish release candidates through the temporary manual workflow |
 
 For work on robostickies itself, see the [development guide](development.md).

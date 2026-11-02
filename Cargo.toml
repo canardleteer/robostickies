@@ -15,10 +15,30 @@ tempfile = "3"
 
 [package]
 name = "robostickies"
-version = "0.1.0"
+version = "0.1.1-rc.1"
 edition.workspace = true
 rust-version.workspace = true
 description = "Small repository-local notes for humans and agents, through CLI and MCP"
+license = "MIT"
+repository = "https://github.com/canardleteer/robostickies"
+readme = "README.md"
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/build.rs",
+    "/build_support/**/*.rs",
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/examples/**/*.rs",
+    "/docs/usage/**/*.md",
+    "/docs/assets/*",
+]
+
+[build-dependencies]
+built = { version = "=0.8.1", default-features = false, features = ["gix"] }
+serde_json.workspace = true
 
 [dependencies]
 anyhow.workspace = true

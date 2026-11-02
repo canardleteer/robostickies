@@ -2,10 +2,11 @@
 
 use crate::CheckStep;
 
-pub(crate) const CHECK_ORDER: [CheckStep; 4] = [
+pub(crate) const CHECK_ORDER: [CheckStep; 5] = [
     CheckStep::Fmt,
     CheckStep::Check,
     CheckStep::Clippy,
+    CheckStep::Machete,
     CheckStep::Test,
 ];
 pub(crate) const LLVM_COV_REPORT: &str = "target/coverage/llvm-cov/html/index.html";

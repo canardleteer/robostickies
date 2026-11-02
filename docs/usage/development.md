@@ -27,10 +27,11 @@ Checks stop at the first failure and run in this order:
 | `fmt` | `cargo fmt --all -- --check` |
 | `check` | `cargo check --locked --workspace --all-targets --all-features` |
 | `clippy` | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` |
+| `machete` | `cargo machete --skip-target-dir` |
 | `test` | `cargo test --locked --workspace --all-features` (including doctests) |
 
 GitHub Actions runs `cargo xtask check` on pushes to `main`, pull requests, and
-manual runs using stable Rust with rustfmt and Clippy. The Linux job is blocking.
+manual runs using stable Rust with rustfmt, Clippy, and cargo-machete 0.9.2. The Linux job is blocking.
 macOS and Windows jobs are informative and may fail without blocking the
 workflow; the matrix continues after a failure. Supporting either additional
 platform requires explicit adoption. Check names remain
@@ -62,13 +63,16 @@ currently declares no optional features, so a useful alternative is:
 cargo xtask check --only=check --no-default-features
 ```
 
-Feature options never go to rustfmt. Only tools needed by the selected checks
+Feature options never go to rustfmt or machete. Machete receives no workspace,
+lockfile, target, or feature flags and never rewrites manifests. Unused dependency
+findings and execution errors fail the step. Only tools needed by the selected checks
 are probed. Subprocesses search the caller's `PATH` before platform fallback
 locations. Missing Rust components can be installed with:
 
 ```sh
 rustup component add rustfmt
 rustup component add clippy
+cargo install --locked cargo-machete --version 0.9.2
 ```
 
 ## Coverage
@@ -86,8 +90,8 @@ cargo xtask coverage-open
 engine. Coverage runs the workspace's tests across all targets and writes
 `target/coverage/llvm-cov/html/index.html`. The xtask disables automatic Rust
 component installation, so install the LLVM tools explicitly when needed.
-The report includes application, xtask, and profiling-example sources. Test
-directories, dependencies, and build artifacts are excluded.
+The report includes build scripts, application, xtask, and profiling-example
+sources. Test directories, dependencies, and generated build artifacts are excluded.
 
 Run coverage locally as a merge request nears completion and inspect each
 production source file. Reports stay local; CI neither uploads coverage nor
@@ -139,7 +143,7 @@ recording fails with a permission error; the xtask does not change that setting.
 
 Reports stay under the root `target/` directory even when build artifacts use
 `CARGO_TARGET_DIR`. No container image workflow is provided. The existing
-[self-drive testing skill](../../.agents/skills/self-drive-testing/SKILL.md)
+[self-drive testing skill](https://github.com/canardleteer/robostickies/blob/main/.agents/skills/self-drive-testing/SKILL.md)
 covers installed CLI/MCP verification. A separate `mcp-test` command with a
 fresh-agent feedback loop can be added by request; it is not part of these
 checks.

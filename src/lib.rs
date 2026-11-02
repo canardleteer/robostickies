@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod build_info;
 pub mod cli;
 pub mod config;
 mod document;

@@ -56,6 +56,7 @@ impl Fixture {
             "cargo",
             "rustfmt",
             "cargo-clippy",
+            "cargo-machete",
             "cargo-llvm-cov",
             "cargo-tarpaulin",
             "samply",
@@ -94,6 +95,7 @@ impl Fixture {
         command
             .env("PATH", &self.tools)
             .env("CARGO", self.program("cargo"))
+            .env("CARGO_PKG_NAME", "xtask")
             .env("FIXTURE_LOG", self.root.path().join("calls.log"));
     }
 
@@ -124,12 +126,14 @@ async fn checks_dispatch_in_order_forward_features_and_stop_after_failures() {
             "cargo\t--version", "rustfmt\t--version", "cargo\tfmt\t--all\t--\t--check",
             "cargo\tcheck\t--locked\t--workspace\t--all-targets\t--all-features",
             "cargo-clippy\t--version", "cargo\tclippy\t--locked\t--workspace\t--all-targets\t--all-features\t--\t-D\twarnings",
+            "cargo-machete\t--version", "cargo\tmachete\t--skip-target-dir",
             "cargo\ttest\t--locked\t--workspace\t--all-features",
         ]);
         fs::remove_file(f.root.path().join("calls.log")).unwrap();
         successful(&f.run(&["check", "--only=test,check,test", "--no-default-features", "--features=alpha,beta"]).await);
         assert!(!f.log().contains("rustfmt"));
         assert!(!f.log().contains("cargo-clippy"));
+        assert!(!f.log().contains("machete"));
         assert!(f.log().contains("--no-default-features\t--features\talpha,beta"));
         assert!(f.log().find("cargo\tcheck").unwrap() < f.log().find("cargo\ttest").unwrap());
         fs::remove_file(f.root.path().join("calls.log")).unwrap();
@@ -137,7 +141,7 @@ async fn checks_dispatch_in_order_forward_features_and_stop_after_failures() {
         assert!(!output.status.success());
         assert!(!f.log().contains("cargo\tcheck"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("failed with"));
-        let output = f.run(&["check", "--exclude=fmt,check,clippy,test"]).await;
+        let output = f.run(&["check", "--exclude=fmt,check,clippy,machete,test"]).await;
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("selection is empty"));
         let output = f.command(&["check"]).env("FIXTURE_UNUSABLE", "cargo").bounded_output().await.unwrap();
@@ -151,6 +155,71 @@ async fn checks_dispatch_in_order_forward_features_and_stop_after_failures() {
         f.environment(&mut main);
         successful(&main.args(["check", "--only=fmt"]).bounded_output().await.unwrap());
     }).await.expect("check dispatch timed out");
+}
+
+#[tokio::test]
+async fn machete_is_selected_without_cargo_flags_and_propagates_tool_failures() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let f = Fixture::new().await;
+        let manifest = f.root.path().join("Cargo.toml");
+        fs::write(&manifest, "# preserve manifests\n").unwrap();
+        successful(
+            &f.run(&[
+                "check",
+                "--only=test,machete,machete",
+                "--features=alpha",
+                "--no-default-features",
+            ])
+            .await,
+        );
+        assert_eq!(
+            f.log().lines().collect::<Vec<_>>(),
+            [
+                "cargo\t--version",
+                "cargo-machete\t--version",
+                "cargo\tmachete\t--skip-target-dir",
+                "cargo\ttest\t--locked\t--workspace\t--no-default-features\t--features\talpha",
+            ]
+        );
+        for (variable, value, message) in [
+            (
+                "FIXTURE_UNUSABLE",
+                "cargo-machete",
+                "installed but unusable",
+            ),
+            ("FIXTURE_FINDINGS", "1", "unused dependency"),
+            ("FIXTURE_FAIL", "machete", "failed with"),
+        ] {
+            fs::remove_file(f.root.path().join("calls.log")).unwrap();
+            let output = f
+                .command(&["check", "--only=machete,test"])
+                .env(variable, value)
+                .bounded_output()
+                .await
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains(message));
+            assert!(!f.log().contains("cargo\ttest"));
+            assert_eq!(
+                fs::read_to_string(&manifest).unwrap(),
+                "# preserve manifests\n"
+            );
+        }
+        fs::remove_file(f.program("cargo-machete")).unwrap();
+        let output = f.run(&["check", "--only=machete"]).await;
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("cargo install --locked cargo-machete --version 0.9.2")
+        );
+        successful(&f.run(&["check", "--only=check"]).await);
+        fs::create_dir(f.program("cargo-machete")).unwrap();
+        let output = f.run(&["check", "--only=machete"]).await;
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("could not be launched"));
+    })
+    .await
+    .expect("machete dispatch timed out");
 }
 
 #[tokio::test]

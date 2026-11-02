@@ -45,6 +45,14 @@ pub(crate) fn run(root: &Path, args: &CheckArgs) -> Result<()> {
                 &CommandSpec::new("cargo-clippy").arg("--version"),
                 "Install it with `rustup component add clippy`.",
             )?,
+            CheckStep::Machete => require(
+                root,
+                "cargo-machete",
+                &CommandSpec::new("cargo-machete")
+                    .arg("--version")
+                    .env_remove("CARGO"),
+                "Install it with `cargo install --locked cargo-machete --version 0.9.2`.",
+            )?,
             _ => {}
         }
         run_command(root, &command_for(step, &args.features))?;
@@ -55,6 +63,13 @@ pub(crate) fn run(root: &Path, args: &CheckArgs) -> Result<()> {
 fn command_for(step: CheckStep, features: &FeatureArgs) -> CommandSpec {
     let subcommand = match step {
         CheckStep::Fmt => return CommandSpec::cargo().args(["fmt", "--all", "--", "--check"]),
+        CheckStep::Machete => {
+            // 0.9.2 uses CARGO_PKG_NAME to distinguish direct and Cargo invocation.
+            // cargo run supplies xtask's value, which would misclassify this child.
+            return CommandSpec::cargo()
+                .args(["machete", "--skip-target-dir"])
+                .env_remove("CARGO_PKG_NAME");
+        }
         CheckStep::Check => "check",
         CheckStep::Clippy => "clippy",
         CheckStep::Test => "test",
@@ -83,7 +98,12 @@ mod tests {
         );
         assert_eq!(
             select_steps(&[], &[CheckStep::Clippy]).unwrap(),
-            [CheckStep::Fmt, CheckStep::Check, CheckStep::Test]
+            [
+                CheckStep::Fmt,
+                CheckStep::Check,
+                CheckStep::Machete,
+                CheckStep::Test
+            ]
         );
         assert!(select_steps(&[], &policy::CHECK_ORDER).is_err());
     }
@@ -95,6 +115,21 @@ mod tests {
             command_for(CheckStep::Fmt, &features),
             CommandSpec::cargo().args(["fmt", "--all", "--", "--check"])
         );
+        for features in [
+            features.clone(),
+            FeatureArgs {
+                features: vec!["alpha".into()],
+                no_default_features: true,
+                ..FeatureArgs::default()
+            },
+        ] {
+            assert_eq!(
+                command_for(CheckStep::Machete, &features),
+                CommandSpec::cargo()
+                    .args(["machete", "--skip-target-dir"])
+                    .env_remove("CARGO_PKG_NAME")
+            );
+        }
         assert_eq!(
             command_for(CheckStep::Clippy, &features),
             CommandSpec::cargo().args([

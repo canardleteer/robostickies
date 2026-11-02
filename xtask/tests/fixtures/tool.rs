@@ -7,6 +7,14 @@ fn main() {
     let action = args.first().map(String::as_str).unwrap_or("");
     let mut log = fs::OpenOptions::new().create(true).append(true).open(env::var_os("FIXTURE_LOG").unwrap()).unwrap();
     writeln!(log, "{role}\t{}", args.join("\t")).unwrap();
+    if role == "cargo-machete" && env::var_os("CARGO").is_some() {
+        eprintln!("probe inherited Cargo invocation environment");
+        process::exit(7);
+    }
+    if role == "cargo" && action == "machete" && env::var_os("CARGO_PKG_NAME").is_some() {
+        eprintln!("machete inherited parent package identity");
+        process::exit(7);
+    }
     if args.iter().any(|s| s == "--version") {
         if env::var("FIXTURE_UNUSABLE").ok().as_deref() == Some(role) {
             eprintln!("fixture loader failed");
@@ -14,6 +22,10 @@ fn main() {
         }
         println!("fixture 1.0");
         return;
+    }
+    if action == "machete" && env::var_os("FIXTURE_FINDINGS").is_some() {
+        eprintln!("unused dependency: fixture");
+        process::exit(1);
     }
     if role == "cargo" && action == "pkgid" {
         match env::var("FIXTURE_PKGID").as_deref() {

@@ -13,6 +13,7 @@ pub(crate) struct CommandSpec {
     pub(crate) program: OsString,
     pub(crate) args: Vec<OsString>,
     env: Vec<(OsString, OsString)>,
+    env_remove: Vec<OsString>,
 }
 
 impl CommandSpec {
@@ -21,6 +22,7 @@ impl CommandSpec {
             program: program.into(),
             args: Vec::new(),
             env: Vec::new(),
+            env_remove: Vec::new(),
         }
     }
 
@@ -43,6 +45,11 @@ impl CommandSpec {
         self
     }
 
+    pub(crate) fn env_remove(mut self, key: impl Into<OsString>) -> Self {
+        self.env_remove.push(key.into());
+        self
+    }
+
     fn command(&self, root: &Path) -> Command {
         let mut command = Command::new(&self.program);
         if let Some(path) = std::env::var_os("PATH") {
@@ -52,6 +59,9 @@ impl CommandSpec {
             .args(&self.args)
             .envs(self.env.iter().cloned())
             .current_dir(root);
+        for key in &self.env_remove {
+            command.env_remove(key);
+        }
         command
     }
 

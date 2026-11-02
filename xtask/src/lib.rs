@@ -51,6 +51,7 @@ enum CheckStep {
     Fmt,
     Check,
     Clippy,
+    Machete,
     Test,
 }
 
@@ -164,11 +165,14 @@ mod tests {
         command.clone().debug_assert();
         assert!(command.render_long_help().to_string().contains("ci"));
         for name in ["check", "ci"] {
-            let cli = Cli::try_parse_from(["xtask", name, "--only=test,fmt"]).unwrap();
+            let cli = Cli::try_parse_from(["xtask", name, "--only=test,machete,fmt"]).unwrap();
             let Task::Check(args) = cli.task else {
                 panic!("expected check")
             };
-            assert_eq!(args.only, [CheckStep::Test, CheckStep::Fmt]);
+            assert_eq!(
+                args.only,
+                [CheckStep::Test, CheckStep::Machete, CheckStep::Fmt]
+            );
         }
     }
 

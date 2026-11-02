@@ -89,7 +89,7 @@ pub(crate) fn load_shared(root: &Path) -> Result<Configuration> {
 
 fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Result<Configuration> {
     let mut config = Configuration {
-        format_version: 1,
+        format_version: version::FORMAT_VERSION,
         data_version: version::LEGACY,
         upgrade_available: false,
         tags: TagDefaults::default(),
@@ -122,10 +122,13 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
             )
         })?;
         if path == shared {
-            if layer.format_version != Some(1) {
+            if layer.format_version != Some(version::FORMAT_VERSION) {
                 return Err(Error::new(
                     "configuration",
-                    "Store config.toml must contain format_version = 1",
+                    format!(
+                        "Store config.toml must contain format_version = {}",
+                        version::FORMAT_VERSION
+                    ),
                 ));
             }
             config.data_version = layer
@@ -145,13 +148,14 @@ fn load_layers(root: &Path, user: Option<&Path>, include_private: bool) -> Resul
             ));
         }
         if let Some(version) = layer.format_version
-            && version != 1
+            && version != version::FORMAT_VERSION
         {
             return Err(Error::new(
                 "configuration",
                 format!(
-                    "Unsupported format_version {version} in {}; expected 1",
-                    path.display()
+                    "Unsupported format_version {version} in {}; expected {}",
+                    path.display(),
+                    version::FORMAT_VERSION
                 ),
             ));
         }

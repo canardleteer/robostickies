@@ -66,7 +66,8 @@ agent guidance.
 - Before completion or a commit, run `cargo fmt --all`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and
   `cargo test --workspace --all-features`. `cargo xtask check` runs these checks
-  with formatting in check mode, plus compilation of all targets.
+  in the order fmt, check, clippy, machete, test, with formatting in check mode,
+  compilation of all targets, and unused-dependency detection without manifest edits.
 
 ## Development tasks
 

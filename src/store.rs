@@ -493,7 +493,8 @@ impl Store {
             warnings: vec![],
         };
         let new_config = format!(
-            "format_version = 1\ndata_version = \"{}\"\n\n[tags]\ndefault_private = false\nprivate_patterns = []\n",
+            "format_version = {}\ndata_version = \"{}\"\n\n[tags]\ndefault_private = false\nprivate_patterns = []\n",
+            version::FORMAT_VERSION,
             version::CURRENT
         );
         for (relative, body) in [("config.toml", new_config.as_str()), ("README.md", GUIDE)] {

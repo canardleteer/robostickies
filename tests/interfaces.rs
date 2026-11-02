@@ -314,6 +314,8 @@ async fn real_stdio_mcp_discovery_mutation_errors_and_cli_interoperation() {
         process.kill_on_drop(true).args(["--repo", temp.path().to_str().unwrap(), "--no-user-config", "mcp"]);
         let client = ().serve(TokioChildProcess::new(process).unwrap()).await.unwrap();
         let info = client.peer_info().unwrap();
+        assert_eq!(info.server_info.as_ref().unwrap().name, "robostickies");
+        assert_eq!(info.server_info.as_ref().unwrap().version, env!("CARGO_PKG_VERSION"));
         assert!(info.instructions.as_ref().unwrap().contains("get_context"));
         let tools = client.list_all_tools().await.unwrap();
         for name in ["get_context", "create_note", "create_tag", "publish_note", "list_notes", "review_notes"] {

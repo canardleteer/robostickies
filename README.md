@@ -21,10 +21,10 @@ Inspired by [papercuts](https://github.com/treygoff24/papercuts) and
 
 ## Quick Start
 
-Requires Rust 1.90 or newer. Install from Git and initialize the target repository:
+Requires Rust 1.90 or newer. Install the release candidate and initialize the target repository:
 
 ```sh
-cargo install --git https://github.com/canardleteer/robostickies.git --locked
+cargo install robostickies --version 0.1.1-rc.1 --locked
 cd /path/to/repository
 robostickies init
 robostickies context
@@ -49,6 +49,8 @@ to use it without adding tracked integration files.
 
 - [CLI access](docs/usage/getting-started.md) works from any directory in a
   repository, with file or stdin input and optional JSON output.
+- [Build identification](docs/usage/getting-started.md#version-and-build-identification)
+  reports the package version, commit, source state, target, compiler, and profile.
 - [Notes and tags](docs/usage/getting-started.md#notes-and-tags) capture friction
   and useful successes, with custom tags and startup guidance.
 - [Markdown storage](docs/usage/storage.md) keeps notes in editable files that
@@ -71,7 +73,7 @@ to use it without adding tracked integration files.
 - [Store versions and upgrades](docs/usage/upgrades.md) report legacy formats
   and migrate the shared configuration explicitly while preserving Markdown.
 - [Development tasks](docs/usage/development.md) provide workspace checks,
-  coverage reports, and profiling against synthetic notes.
+  unused-dependency checks, coverage reports, and profiling against synthetic notes.
 
 ## Development
 
@@ -89,5 +91,8 @@ cargo xtask check
 coverage, profiling, and optional tool installation. No container engine is
 required.
 
-Agent development and verification instructions are in [AGENTS.md](AGENTS.md).
-Integration test conventions are in [tests/AGENTS.md](tests/AGENTS.md).
+Agent development and verification instructions are in [AGENTS.md](https://github.com/canardleteer/robostickies/blob/main/AGENTS.md).
+Integration test conventions are in [tests/AGENTS.md](https://github.com/canardleteer/robostickies/blob/main/tests/AGENTS.md).
+The temporary [publishing procedure](docs/usage/publishing.md) covers release candidates.
+
+Licensed under the [MIT License](LICENSE).

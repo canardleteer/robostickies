@@ -66,6 +66,7 @@ fn commands(engine: CoverageEngine, features: &FeatureArgs) -> Vec<CommandSpec> 
                 .env("CARGO_LLVM_COV_SETUP", "no"),
             command
                 .args([
+                    "--include-build-script",
                     "--no-default-ignore-filename-regex",
                     "--ignore-filename-regex",
                     policy::COVERAGE_IGNORES,

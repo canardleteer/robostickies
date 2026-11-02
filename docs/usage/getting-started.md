@@ -4,7 +4,13 @@ Requires Rust 1.90 or newer.
 
 ## Install
 
-Install the current Git version:
+Install this release candidate from crates.io:
+
+```sh
+cargo install robostickies --version 0.1.1-rc.1 --locked
+```
+
+To install the current Git version instead:
 
 ```sh
 cargo install --git https://github.com/canardleteer/robostickies.git --locked
@@ -17,6 +23,31 @@ git clone https://github.com/canardleteer/robostickies.git
 cd robostickies
 cargo install --path . --locked
 ```
+
+## Version and build identification
+
+`robostickies -V` prints the package name and SemVer on one line.
+`robostickies --version` adds labeled build details:
+
+```text
+robostickies 0.1.1-rc.1
+Commit: <full commit hash or unknown>
+Source state: <clean, dirty, or unknown>
+Target: <target triple>
+Compiler: <rustc version>
+Build profile: <Cargo profile>
+```
+
+These values are captured at build time. Git checkouts use their own commit and
+tracked-file state; untracked and ignored files do not make a build dirty.
+Packaged sources use Cargo's `.cargo_vcs_info.json`, including its dirty flag
+when present. Missing or malformed provenance produces `unknown` values. An
+enclosing consumer checkout never supplies the package's source identity.
+
+Both flags work without Git, outside a repository, and without opening a note
+store. Output omits builder paths and timestamps. It includes no usernames or hostnames.
+MCP advertises the plain package SemVer. Package versions are separate from
+[configuration and stored-data versions](upgrades.md#format-version-policy).
 
 ## Initialize a repository
 

@@ -9,13 +9,15 @@ package remains the default member.
 
 ## Command policy
 
-- `check` runs `fmt`, `check`, `clippy`, and `test` in that order, failing at the
+- `check` runs `fmt`, `check`, `clippy`, `machete`, and `test` in that order, failing at the
   first error. `ci` is a visible alias of the same parser and implementation.
   `--only` and `--exclude` accept comma-separated step names, reject empty or
   unknown selections, and retain registry order after deduplication.
 - Feature-aware checks and coverage default to `--all-features` only when no
   feature option is supplied. Forward `--features` and `--no-default-features`
-  with Cargo semantics; they may be combined. Formatting receives no features.
+  with Cargo semantics; they may be combined. Formatting and machete receive no
+  features. Machete runs `cargo machete --skip-target-dir` without Cargo's
+  workspace, lockfile, or target flags; findings and execution failures stop checks.
 - Check commands use the lockfile and whole workspace. Compilation and Clippy
   cover all targets; tests use `cargo test --workspace` to retain doctests.
   Formatting checks without rewriting; Clippy denies warnings.
@@ -25,7 +27,7 @@ package remains the default member.
   `target/coverage/llvm-cov/html/index.html` and
   `target/coverage/tarpaulin/tarpaulin-report.html`. Both `coverage --open` and
   `coverage-open` generate a fresh report before opening it.
-- LLVM reports include the application, xtask, and profiling example. Override
+- LLVM reports include build scripts, application, xtask, and profiling example. Override
   the engine's default filename exclusions so examples remain visible; omit
   test directories, dependencies, and build artifacts. The profiling example
   participates in tests through its Cargo target configuration.
@@ -58,6 +60,7 @@ rustup component add rustfmt
 rustup component add clippy
 rustup component add llvm-tools-preview
 cargo install --locked cargo-llvm-cov
+cargo install --locked cargo-machete --version 0.9.2
 cargo install --locked cargo-tarpaulin
 cargo install --locked samply
 ```
