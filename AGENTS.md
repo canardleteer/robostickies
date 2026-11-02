@@ -78,6 +78,11 @@ The `image` handle is omitted because this repository has no container image
 workflow. The optional fresh-agent `mcp-test` evaluator is not adopted; add it
 only by user request, alongside the existing self-drive workflow.
 
+Run `cargo xtask coverage` locally as a merge request nears completion. Review
+per-file coverage and meaningful failure paths; coverage is not a CI gate.
+Linux is the supported platform. macOS and Windows checks are informative;
+support for either platform requires explicit adoption.
+
 Keep CI/workflow declarations and script callers aligned with canonical xtask
 behavior when it changes. The xtask stays provider-agnostic and must not inspect
 CI declarations. Prefer typed, portable `cargo xtask` commands for Cargo-aware

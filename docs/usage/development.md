@@ -22,6 +22,18 @@ Checks stop at the first failure and run in this order:
 | `clippy` | `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings` |
 | `test` | `cargo test --locked --workspace --all-features` (including doctests) |
 
+GitHub Actions runs `cargo xtask check` on pushes to `main`, pull requests, and
+manual runs using stable Rust with rustfmt and Clippy. The Linux job is blocking.
+macOS and Windows jobs are informative and may fail without blocking the
+workflow; the matrix continues after a failure. Supporting either additional
+platform requires explicit adoption. Check names remain
+`cargo xtask check (Linux)`, `cargo xtask check (macOS)`, and
+`cargo xtask check (Windows)`.
+
+Ordinary merges require the Linux check after its first successful run.
+Administrators may push directly during pipeline bring-up. No pull request or
+reviewer requirement is imposed.
+
 Select checks with either `--only` or `--exclude`:
 
 ```sh
@@ -66,6 +78,10 @@ cargo xtask coverage-open
 engine. Coverage runs the workspace's tests across all targets and writes
 `target/coverage/llvm-cov/html/index.html`. The xtask disables automatic Rust
 component installation, so install the LLVM tools explicitly when needed.
+
+Run coverage locally as a merge request nears completion and inspect each
+production source file. Reports stay local; CI neither uploads coverage nor
+enforces a percentage. Linux coverage does not measure macOS or Windows code.
 
 To use [Tarpaulin](https://github.com/xd009642/tarpaulin#readme):
 
