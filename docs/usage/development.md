@@ -54,15 +54,16 @@ include the compiler and platform alongside manifest and lockfile hashes.
 Only pushes to this repository's `main` save caches; other jobs restore them.
 Packaged executable checks also use the root target directory.
 
-[Release automation](publishing.md) follows successful main-push checks through
+[Release automation](https://github.com/canardleteer/robostickies/blob/main/MAINTAINERS.md)
+follows successful main-push checks through
 an App-authenticated workflow dispatch carrying the checked SHA. Its repository
 variable keeps it disabled until App and Trusted Publishing setup is complete.
 The release-plz executable is pinned independently of weekly Action updates;
 review its matching upstream documentation before upgrading.
 
-Ordinary merges require the Linux check after its first successful run.
-Administrators may push directly during pipeline bring-up. No pull request or
-reviewer requirement is imposed.
+The Linux check is required for updates to `main`, including administrator
+updates. Deletion and non-fast-forward updates to `main` are blocked. No pull
+request or reviewer requirement is imposed.
 
 Select checks with either `--only` or `--exclude`:
 
