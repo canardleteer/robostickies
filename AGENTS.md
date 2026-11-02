@@ -65,7 +65,26 @@ agent guidance.
   concurrency, and source/index consistency. Avoid unsafe code.
 - Before completion or a commit, run `cargo fmt --all`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and
-  `cargo test --workspace --all-features`.
+  `cargo test --workspace --all-features`. `cargo xtask check` runs these checks
+  with formatting in check mode, plus compilation of all targets.
+
+## Development tasks
+
+Use `cargo xtask check` (also `cargo xtask ci`), `coverage` / `coverage-open`,
+and `profile` / `profile-open` as the canonical development handles. Follow
+[xtask/AGENTS.md](xtask/AGENTS.md) for work under `xtask/` and see the
+[development guide](docs/usage/development.md) for command usage.
+The `image` handle is omitted because this repository has no container image
+workflow. The optional fresh-agent `mcp-test` evaluator is not adopted; add it
+only by user request, alongside the existing self-drive workflow.
+
+Keep CI/workflow declarations and script callers aligned with canonical xtask
+behavior when it changes. The xtask stays provider-agnostic and must not inspect
+CI declarations. Prefer typed, portable `cargo xtask` commands for Cargo-aware
+development orchestration over new Python wrappers. Inspect overlapping Python
+scripts and propose a migration; obtain user approval before replacing mature
+scripts or changing their callers. Retain Python when its libraries or
+data-processing strengths are material.
 
 ## Agent documentation
 

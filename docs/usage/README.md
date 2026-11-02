@@ -13,5 +13,6 @@ the guide for the task:
 | [Resolution and adoption](outcomes.md) | Record verification and adoption outcomes |
 | [MCP server](mcp.md) | Connect an agent and configure tool approvals |
 | [Diagnostics and cache recovery](maintenance.md) | Validate sources and recover the index |
+| [Development tasks](development.md) | Run workspace checks, coverage, and profiling |
 
-For work on robostickies itself, see the [development guide](../../README.md#development).
+For work on robostickies itself, see the [development guide](development.md).
