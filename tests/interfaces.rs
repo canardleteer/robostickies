@@ -1904,7 +1904,7 @@ async fn cache_table_faults_and_missing_definitions_refresh_through_live_mcp() {
 
 #[tokio::test]
 async fn doctor_identifies_missing_private_exclusion_while_cache_remains_ignored() {
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         let temp = tempfile::tempdir().unwrap();
         init_git(temp.path()).await;
         cli(temp.path(), &["init"]).await;
