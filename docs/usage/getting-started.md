@@ -7,7 +7,7 @@ Requires Rust 1.90 or newer.
 Install this release candidate from crates.io:
 
 ```sh
-cargo install robostickies --version 0.1.1-rc.1 --locked
+cargo install robostickies --version '=0.1.1-rc.2' --locked
 ```
 
 To install the current Git version instead:
@@ -30,7 +30,7 @@ cargo install --path . --locked
 `robostickies --version` adds labeled build details:
 
 ```text
-robostickies 0.1.1-rc.1
+robostickies 0.1.1-rc.2
 Commit: <full commit hash or unknown>
 Source state: <clean, dirty, or unknown>
 Target: <target triple>

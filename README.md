@@ -4,6 +4,9 @@
 
 # robostickies
 
+[![crates.io](https://img.shields.io/crates/v/robostickies.svg)](https://crates.io/crates/robostickies)
+[![Workspace checks](https://github.com/canardleteer/robostickies/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/canardleteer/robostickies/actions/workflows/check.yml)
+
 Enables taking brief repository notes for humans and agents, during development
 and available through a CLI interface and an MCP `stdio` server. Capture what
 gets in the way (`papercut`), what helps (`paperclip`), and general
@@ -24,7 +27,7 @@ Inspired by [papercuts](https://github.com/treygoff24/papercuts) and
 Requires Rust 1.90 or newer. Install the release candidate and initialize the target repository:
 
 ```sh
-cargo install robostickies --version 0.1.1-rc.1 --locked
+cargo install robostickies --version '=0.1.1-rc.2' --locked
 cd /path/to/repository
 robostickies init
 robostickies context
