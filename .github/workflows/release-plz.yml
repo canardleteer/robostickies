@@ -6,6 +6,12 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      checked_sha:
+        description: Previously checked main SHA; leave empty to use the current main commit
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -34,7 +40,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          CHECKED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          CHECKED_SHA: ${{ github.event.workflow_run.head_sha || inputs.checked_sha || github.sha }}
         shell: bash
         run: |
           [[ "$CHECKED_SHA" =~ ^[0-9a-f]{40}$ ]]
@@ -50,8 +56,37 @@ jobs:
             ' > /dev/null
           echo "sha=$CHECKED_SHA" >> "$GITHUB_OUTPUT"
 
+  dispatch-release:
+    name: Dispatch checked release
+    if: github.event_name == 'workflow_run'
+    needs: checked-main
+    runs-on: ubuntu-latest
+    permissions: {}
+    # crates.io rejects OIDC tokens whose event_name is workflow_run.
+    steps:
+      - name: Create repository installation token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          owner: canardleteer
+          repositories: robostickies
+          permission-contents: read
+          permission-actions: write
+          skip-token-revoke: false
+      - name: Dispatch publication on main with the checked SHA
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          CHECKED_SHA: ${{ needs.checked-main.outputs.sha }}
+        run: |
+          gh workflow run release-plz.yml --repo "$GH_REPO" --ref main \
+            -f checked_sha="$CHECKED_SHA"
+
   release:
     name: Publish release
+    if: github.event_name == 'workflow_dispatch'
     needs: checked-main
     runs-on: ubuntu-latest
     environment: crates-io
