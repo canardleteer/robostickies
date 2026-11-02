@@ -7,7 +7,7 @@ Requires Rust 1.90 or newer.
 Install robostickies from crates.io:
 
 ```sh
-cargo install robostickies --version '=0.1.1' --locked
+cargo install robostickies --locked
 ```
 
 To install the current Git version instead:
