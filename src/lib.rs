@@ -5,13 +5,14 @@
 
 #![forbid(unsafe_code)]
 
-mod build_info;
+pub mod build_info;
 pub mod cli;
 pub mod config;
 mod document;
 mod index;
 pub mod mcp;
 pub mod model;
+mod snapshot;
 pub mod store;
 pub mod version;
 

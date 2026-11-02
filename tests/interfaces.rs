@@ -393,7 +393,7 @@ async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
                 "publish_note" => json!({"id": id, "dry_run": true, "expected_revision": saved["note"]["revision"]}),
                 "create_tag" => json!({"name": "unexpected", "topic": "Unexpected tag"}),
                 "get_context" | "init_store" | "list_notes" | "review_notes" | "list_tags"
-                | "get_config" | "validate_store" | "rebuild_index" | "upgrade_store" => json!({}),
+                | "get_config" | "validate_store" | "rebuild_index" | "upgrade_store" | "version" => json!({}),
                 name => panic!("Add a valid input for the new tool {name}"),
             };
             arguments["unexpected_field"] = json!(true);
@@ -435,7 +435,7 @@ async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
                 .exists()
         );
         assert_eq!(call_mcp(&client, "list_notes", json!({})).await["total"], 1);
-        for name in ["get_config", "validate_store", "rebuild_index"] {
+        for name in ["get_config", "validate_store", "rebuild_index", "version"] {
             let result = client
                 .call_tool(CallToolRequestParams::new(name))
                 .await
@@ -1368,7 +1368,12 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let path = temp.path().join(".robostickies").join(saved["note"]["path"].as_str().unwrap());
         let original = fs::read(&path).unwrap();
         let preview = call_mcp(&client, "upgrade_store", json!({"dry_run": true})).await;
-        assert_eq!(preview, json!({"source_version":"v1alpha1", "target_version":"v1alpha2", "wrote":false, "dry_run":true}));
+        assert_eq!(preview["source_version"], "v1alpha1");
+        assert_eq!(preview["target_version"], "v1alpha2");
+        assert_eq!(preview["wrote"], false);
+        assert_eq!(preview["dry_run"], true);
+        assert_eq!(preview["snapshot"], Value::Null);
+        assert_eq!(preview["upgrade"]["requirement"], "should");
         assert_eq!(fs::read_to_string(&config).unwrap(), legacy);
         let preview = cli(temp.path(), &["upgrade", "--dry-run"]).await;
         assert_eq!(preview["wrote"], false);
@@ -2168,4 +2173,210 @@ async fn filesystem_failures_keep_cli_error_json_and_source_files_intact() {
     })
     .await
     .expect("filesystem failure tests timed out");
+}
+
+#[tokio::test]
+async fn compiled_mcp_identity_and_body_hints_interoperate_with_the_cli() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        let identity = call_mcp(&client, "version", json!({})).await;
+        assert_eq!(identity, serde_json::to_value(robostickies::build_info::version()).unwrap());
+        assert!(!temp.path().join(".robostickies").exists());
+        let uninitialized = call_mcp(&client, "get_config", json!({})).await;
+        assert_eq!(uninitialized["upgrade"]["requirement"], "none");
+        assert_eq!(uninitialized["upgrade"]["can_upgrade"], false);
+        assert_eq!(resource_mcp(&client, "robostickies://config").await, uninitialized);
+        let long = command(temp.path()).arg("--version").bounded_output().await.unwrap();
+        let long = String::from_utf8(long.stdout).unwrap();
+        for (key, label) in [("commit", "Commit"), ("source_state", "Source state"), ("target", "Target"), ("compiler", "Compiler"), ("profile", "Build profile")] {
+            assert!(long.contains(&format!("{label}: {}", identity[key].as_str().unwrap())));
+        }
+        call_mcp(&client, "init_store", json!({})).await;
+        let created = cli(temp.path(), &["add", "key: value", "--private", "--body-format", "yaml"]).await;
+        let id = created["note"]["id"].as_str().unwrap();
+        let read = call_mcp(&client, "get_note", json!({"id": id})).await;
+        assert_eq!(read["metadata"]["body_format"], "yaml");
+        let edited = call_mcp(&client, "update_note", json!({"id": id, "expected_revision": read["revision"], "body_format":"custom/type"})).await;
+        let before = fs::read(temp.path().join(".robostickies").join(edited["note"]["path"].as_str().unwrap())).unwrap();
+        assert_eq!(error_mcp(&client, "update_note", json!({"id":id, "expected_revision":edited["note"]["revision"], "body_format":"text", "clear_body_format":true})).await["error"]["code"], "invalid_input");
+        let conflict = command(temp.path()).args(["update", id, "--if-match", edited["note"]["revision"].as_str().unwrap(), "--body-format", "text", "--clear-body-format"]).bounded_output().await.unwrap();
+        assert_eq!(conflict.status.code(), Some(2));
+        assert_eq!(fs::read(temp.path().join(".robostickies").join(edited["note"]["path"].as_str().unwrap())).unwrap(), before);
+        for (hint, expected) in [(json!({}), Value::Null), (json!({"body_format":"text"}), json!("text"))] {
+            let mut args = json!({"id":id, "expected_revision":edited["note"]["revision"], "dry_run":true});
+            args.as_object_mut().unwrap().extend(hint.as_object().unwrap().clone());
+            assert_eq!(call_mcp(&client, "publish_note", args).await["note"]["metadata"].get("body_format").cloned().unwrap_or_default(), expected);
+        }
+        let cleared = cli(temp.path(), &["update", id, "--if-match", edited["note"]["revision"].as_str().unwrap(), "--clear-body-format"]).await;
+        assert!(cleared["note"]["metadata"].as_object().unwrap().is_empty());
+        let config = temp.path().join(".robostickies/config.toml");
+        fs::write(config, "format_version = 1\ndata_version = 'future'\n").unwrap();
+        assert_eq!(call_mcp(&client, "version", json!({})).await, identity);
+        client.cancel().await.unwrap();
+    }).await.expect("identity/hint interoperation timed out");
+}
+
+#[tokio::test]
+async fn upgrade_deferral_notices_and_snapshot_privacy_cross_cli_and_mcp() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        init_git(temp.path()).await;
+        cli(temp.path(), &["init"]).await;
+        let config = temp.path().join(".robostickies/config.toml");
+        fs::write(&config, "format_version = 1\n").unwrap();
+        let client = start_mcp(temp.path()).await;
+        let public = call_mcp(&client, "get_context", json!({"scope":"public"})).await;
+        let declined = cli(temp.path(), &["upgrade", "--defer"]).await;
+        assert_eq!(declined["deferred"], true);
+        assert!(declined["snapshot"].is_null());
+        assert_eq!(
+            call_mcp(&client, "get_context", json!({"scope":"public"})).await,
+            public
+        );
+        assert_eq!(
+            resource_mcp(&client, "robostickies://config").await["upgrade"]["deferred"],
+            true
+        );
+        let status = command(temp.path())
+            .arg("config")
+            .arg("show")
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(status.status.success() && status.stderr.is_empty());
+        let shared = command(temp.path())
+            .args(["context", "--scope", "public"])
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&shared.stderr).contains("SHOULD"));
+        let preference = temp
+            .path()
+            .join(".robostickies/private/upgrade-preferences.toml");
+        fs::write(&preference, "malformed").unwrap();
+        let warned = command(temp.path())
+            .args(["config", "show"])
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(warned.status.success());
+        assert!(String::from_utf8_lossy(&warned.stderr).contains("recommendations remain enabled"));
+        assert_eq!(
+            call_mcp(&client, "get_context", json!({"scope":"public"})).await,
+            public
+        );
+        // Exclusion checks fail closed, even though the root cache remains usable.
+        let ignore = temp.path().join(".robostickies/.gitignore");
+        fs::write(&ignore, "/cache/\n").unwrap();
+        let rejected = error_mcp(&client, "upgrade_store", json!({})).await;
+        assert_eq!(rejected["error"]["code"], "privacy");
+        assert_eq!(fs::read_to_string(&config).unwrap(), "format_version = 1\n");
+        assert!(!temp.path().join(".robostickies/private/snapshots").exists());
+        fs::write(&ignore, "/private/\n/cache/\n").unwrap();
+        let kept = command(temp.path())
+            .args(["upgrade", "--keep-snapshot"])
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(
+            kept.status.success(),
+            "{}",
+            String::from_utf8_lossy(&kept.stderr)
+        );
+        let result: Value = serde_json::from_slice(&kept.stdout).unwrap();
+        assert_eq!(result["wrote"], true);
+        assert_eq!(result["snapshot"]["retained"], true);
+        assert!(String::from_utf8_lossy(&kept.stderr).contains("Snapshot:"));
+        let retained = temp
+            .path()
+            .join(result["snapshot"]["path"].as_str().unwrap());
+        assert_eq!(
+            fs::read_to_string(retained.join("config.toml")).unwrap(),
+            "format_version = 1\n"
+        );
+        let ignored = Command::new("git")
+            .current_dir(temp.path())
+            .args(["check-ignore", "--no-index", "-q", "--"])
+            .arg(retained)
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(ignored.status.success());
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("upgrade interface verification timed out");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fifo_preferences_warn_without_blocking_and_config_sources_are_rejected() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let directory = temp.path().join(".robostickies");
+        let config = directory.join("config.toml");
+        let original = "format_version = 1\n";
+        fs::write(&config, original).unwrap();
+        let public_before = call_mcp(&client, "get_context", json!({"scope":"public"})).await;
+        let preference = directory.join("private/upgrade-preferences.toml");
+        let created = Command::new("mkfifo")
+            .arg(&preference)
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(created.status.success());
+        let inspected = call_mcp(&client, "get_config", json!({})).await;
+        assert_eq!(inspected["warnings"].as_array().unwrap().len(), 1);
+        assert_eq!(inspected["upgrade"]["requirement"], "should");
+        assert_eq!(inspected["upgrade"]["deferred"], false);
+        assert_eq!(
+            call_mcp(&client, "get_context", json!({"scope":"public"})).await,
+            public_before
+        );
+        let output = command(temp.path())
+            .args(["config", "show"])
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("recommendations remain enabled"));
+        let failed = error_mcp(&client, "upgrade_store", json!({})).await;
+        assert_eq!(failed["error"]["code"], "io");
+        assert_eq!(fs::read_to_string(&config).unwrap(), original);
+        assert!(!directory.join("private/snapshots").exists());
+        fs::remove_file(preference).unwrap();
+        // Shared configuration cannot wait for a FIFO writer either.
+        fs::remove_file(&config).unwrap();
+        let created = Command::new("mkfifo")
+            .arg(&config)
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(created.status.success());
+        assert_eq!(
+            error_mcp(&client, "get_config", json!({})).await["error"]["code"],
+            "configuration"
+        );
+        assert_eq!(
+            error_mcp(
+                &client,
+                "create_note",
+                json!({"body":"must not be created"})
+            )
+            .await["error"]["code"],
+            "configuration"
+        );
+        fs::remove_file(&config).unwrap();
+        fs::write(&config, original).unwrap();
+        assert_eq!(
+            call_mcp(&client, "validate_store", json!({})).await["healthy"],
+            true
+        );
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("FIFO configuration checks timed out");
 }

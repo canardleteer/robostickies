@@ -2,22 +2,59 @@
 
 use std::sync::OnceLock;
 
+use rmcp::schemars::{self, JsonSchema};
+use serde::Serialize;
+
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
     include!(concat!(env!("OUT_DIR"), "/source.rs"));
 }
 
+/// Identity of the running artifact, captured at compilation.
+/// Reading this value performs no filesystem or repository operations.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+pub struct BuildInfo {
+    /// Compiled package name.
+    pub name: &'static str,
+    /// Compiled package SemVer.
+    pub version: &'static str,
+    /// Full source commit, or unknown when provenance is unavailable.
+    pub commit: &'static str,
+    /// Tracked source state: clean, dirty, or unknown.
+    pub source_state: &'static str,
+    /// Rust target triple.
+    pub target: &'static str,
+    /// Compiler version used to build this artifact.
+    pub compiler: &'static str,
+    /// Cargo build profile.
+    pub profile: &'static str,
+}
+
+/// Return the compiled identity, even outside an initialized store.
+pub const fn version() -> BuildInfo {
+    BuildInfo {
+        name: env!("CARGO_PKG_NAME"),
+        version: env!("CARGO_PKG_VERSION"),
+        commit: generated::COMMIT,
+        source_state: generated::SOURCE_STATE,
+        target: generated::TARGET,
+        compiler: generated::RUSTC_VERSION,
+        profile: generated::PROFILE,
+    }
+}
+
 pub(crate) fn long_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
+        let build = version();
         format!(
             "{}\nCommit: {}\nSource state: {}\nTarget: {}\nCompiler: {}\nBuild profile: {}",
-            env!("CARGO_PKG_VERSION"),
-            generated::COMMIT,
-            generated::SOURCE_STATE,
-            generated::TARGET,
-            generated::RUSTC_VERSION,
-            generated::PROFILE,
+            build.version,
+            build.commit,
+            build.source_state,
+            build.target,
+            build.compiler,
+            build.profile,
         )
     })
 }

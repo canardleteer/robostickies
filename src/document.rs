@@ -138,7 +138,7 @@ pub(crate) fn parse_note(text: &str, path: &str, physical: Visibility) -> Result
     timestamp(&header.created_at)?;
     timestamp(&header.updated_at)?;
     if body.trim().is_empty() {
-        return Err(invalid("A note must have a nonempty Markdown body"));
+        return Err(invalid("A note must have a nonempty UTF-8 text body"));
     }
     let mut visibility = physical;
     for tag in &header.tags {
@@ -250,6 +250,12 @@ pub(crate) fn patch_note(original: &str, note: &Note, patch: &UpdateNote) -> Res
     if patch.status.is_some() {
         set("status", Value::String(note.status.as_str().into()))?;
     }
+    if let Some(hint) = &patch.body_format {
+        set("body_format", Value::String(hint.clone()))?;
+    }
+    if patch.clear_body_format && document.get("body_format").is_some() {
+        document.remove("body_format").map_err(yaml_error)?;
+    }
     let body = patch
         .body
         .as_deref()
@@ -259,6 +265,43 @@ pub(crate) fn patch_note(original: &str, note: &Note, patch: &UpdateNote) -> Res
         body.as_deref().unwrap_or(original_body),
         newline,
     ))
+}
+
+pub(crate) fn set_body_format(
+    metadata: &mut BTreeMap<String, Value>,
+    hint: Option<&str>,
+    clear: bool,
+) -> Result<()> {
+    if hint.is_some() && clear {
+        return Err(Error::new(
+            "invalid_input",
+            "body_format and clear_body_format conflict",
+        ));
+    }
+    if hint.is_none() && !clear {
+        return Ok(());
+    }
+    if hint.is_some_and(|value| value.trim().is_empty()) {
+        return Err(Error::new(
+            "invalid_input",
+            "body_format must be a nonblank string",
+        ));
+    }
+    if metadata
+        .get("body_format")
+        .is_some_and(|value| !value.is_string())
+    {
+        return Err(Error::new(
+            "invalid_input",
+            "Existing body_format metadata is not a string; reconcile it in the source before setting or clearing the hint",
+        ));
+    }
+    if let Some(hint) = hint {
+        metadata.insert("body_format".into(), Value::String(hint.into()));
+    } else {
+        metadata.remove("body_format");
+    }
+    Ok(())
 }
 
 /// Refuse symlinked ancestors to keep writes within the selected repository.

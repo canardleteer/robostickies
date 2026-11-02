@@ -15,6 +15,12 @@ pub struct Error {
     pub code: String,
     /// Explanation of the failure and how to recover; excludes note payloads.
     pub message: String,
+    /// Present only for a mandatory safety boundary; ordinary errors retain their shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<crate::version::UpgradeAdvice>,
+    /// Retained recovery copy after a failed migration or source validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<crate::version::SnapshotResult>,
 }
 
 impl Error {
@@ -23,7 +29,23 @@ impl Error {
         Self {
             code: code.into(),
             message: message.into(),
+            upgrade: None,
+            snapshot: None,
         }
+    }
+
+    pub(crate) fn with_upgrade(mut self, advice: crate::version::UpgradeAdvice) -> Self {
+        self.upgrade = Some(advice);
+        self
+    }
+
+    pub(crate) fn with_snapshot(mut self, snapshot: crate::version::SnapshotResult) -> Self {
+        self.message.push_str(&format!(
+            "; recovery snapshot retained at {} (no automatic rollback)",
+            snapshot.path
+        ));
+        self.snapshot = Some(snapshot);
+        self
     }
 
     /// Exit status used by the CLI.
@@ -32,7 +54,7 @@ impl Error {
             "invalid_input" | "invalid_document" => 65,
             "not_found" | "not_initialized" => 66,
             "busy" => 75,
-            "configuration" => 78,
+            "configuration" | "upgrade_required" => 78,
             "io" => 74,
             _ => 1,
         }
@@ -270,7 +292,11 @@ pub struct NotePage {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNote {
+    /// Nonempty UTF-8 text. Markdown or plain text is preferred.
     pub body: String,
+    /// Advisory metadata.body_format; markdown, text, and yaml are recommended.
+    /// Other nonblank strings are accepted without interpreting the body.
+    pub body_format: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     /// Omit to derive privacy from tags. False cannot override a private tag.
@@ -283,6 +309,12 @@ pub struct CreateNote {
 pub struct UpdateNote {
     pub id: String,
     pub body: Option<String>,
+    /// Set an advisory string hint. Omit to preserve existing metadata exactly.
+    pub body_format: Option<String>,
+    /// Remove a string hint; conflicts with body_format. Non-string legacy values
+    /// must be reconciled in the source rather than overwritten by this interface.
+    #[serde(default)]
+    pub clear_body_format: bool,
     pub tags: Option<Vec<String>>,
     pub status: Option<NoteStatus>,
     /// True moves a public note into private storage. Publishing is separate.
@@ -313,6 +345,8 @@ pub struct PublishNote {
     pub dry_run: bool,
     /// Replace the body when preparing the public copy.
     pub body: Option<String>,
+    /// Explicit public hint. The source hint is removed with other extra metadata.
+    pub body_format: Option<String>,
     /// Replace the public tag set. Private tags are always removed or rejected.
     pub tags: Option<Vec<String>>,
     /// Required last-read source revision, including for previews.
@@ -382,6 +416,9 @@ pub struct Review {
 pub struct Health {
     pub data_version: crate::version::DataVersion,
     pub upgrade_available: bool,
+    pub upgrade: crate::version::UpgradeAdvice,
+    /// Local advisory preference warnings, separate from source health.
+    pub warnings: Vec<String>,
     pub healthy: bool,
     pub notes: usize,
     pub tags: usize,
@@ -393,4 +430,8 @@ pub struct Health {
 #[serde(default, deny_unknown_fields)]
 pub struct UpgradeOptions {
     pub dry_run: bool,
+    /// Remember a declined optional target without changing the store version.
+    pub defer: bool,
+    /// Retain the recovery snapshot after a successful migration.
+    pub keep_snapshot: bool,
 }

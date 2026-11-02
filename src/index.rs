@@ -89,24 +89,12 @@ impl Index {
                 }
             }
         }
-        let mut sources = BTreeMap::new();
-        let mut diagnostics = vec![];
-        for (directory, visibility, is_tag) in [
-            ("tags", Visibility::Public, true),
-            ("private/tags", Visibility::Private, true),
-            ("notes", Visibility::Public, false),
-            ("private/notes", Visibility::Private, false),
-        ] {
-            scan(
-                root,
-                directory,
-                visibility,
-                is_tag,
-                &old,
-                &mut sources,
-                &mut diagnostics,
-            )?;
-        }
+        let Catalog {
+            sources,
+            notes,
+            tags,
+            diagnostics,
+        } = read_sources(root, &old)?;
         let changed = force
             || outdated
             || old.len() != sources.len()
@@ -114,66 +102,6 @@ impl Index {
                 old.get(key)
                     .is_none_or(|old| old.fingerprint != source.fingerprint)
             });
-        let mut groups: BTreeMap<String, Vec<Note>> = BTreeMap::new();
-        let mut tags = BTreeMap::new();
-        for source in sources.values() {
-            if let Some(diagnostic) = &source.diagnostic {
-                diagnostics.push(diagnostic.clone());
-            }
-            match &source.entity {
-                Some(Entity::Note(note)) => {
-                    groups
-                        .entry(note.id.clone())
-                        .or_default()
-                        .push(note.clone());
-                }
-                Some(Entity::Tag(tag)) => {
-                    tags.insert(tag.name.clone(), tag.clone());
-                }
-                None => {}
-            }
-        }
-        let mut notes = BTreeMap::new();
-        for (id, copies) in groups {
-            if copies.len() == 1 {
-                notes.insert(id, copies[0].clone());
-                continue;
-            }
-            // A local conflict must not change public selection or expose private details.
-            let public: Vec<_> = copies
-                .iter()
-                .filter(|note| note.visibility == Visibility::Public)
-                .collect();
-            diagnostics.push(Diagnostic {
-                path: copies[0].path.clone(),
-                code: "duplicate_id".into(),
-                message: "Duplicate note ID; give manually copied notes a new UUID".into(),
-                // Canonical filenames allow at most one file per namespace.
-                // A duplicate therefore always involves private storage.
-                visibility: Visibility::Private,
-            });
-            if public.len() == 1 {
-                notes.insert(id, public[0].clone());
-            }
-        }
-        for note in notes.values() {
-            for tag in &note.tags {
-                if !tags.contains_key(tag) {
-                    diagnostics.push(Diagnostic {
-                        path: note.path.clone(),
-                        code: "unknown_tag".into(),
-                        message: format!(
-                            "Undefined tag {tag:?}; create its definition or update this note"
-                        ),
-                        visibility: note.visibility,
-                    });
-                }
-            }
-            if note.visibility == Visibility::Private && !note.path.starts_with("private/") {
-                diagnostics.push(Diagnostic { path: note.path.clone(), code: "misplaced_private_note".into(),
-                    message: "This note has a private tag but is outside private/; move it into private/notes/".into(), visibility: Visibility::Private });
-            }
-        }
         // Open empty tables on first use; transactions make a refresh all-or-nothing.
         let missing = tx.open_table(NOTES)?.is_empty()? && !notes.is_empty();
         if changed || missing {
@@ -379,6 +307,114 @@ impl Index {
     }
 }
 
+struct Catalog {
+    sources: BTreeMap<String, Source>,
+    notes: BTreeMap<String, Note>,
+    tags: BTreeMap<String, Tag>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+/// Validate authoritative sources without opening or repairing the disposable cache.
+/// Caller must already hold the operation lock.
+pub(crate) fn validate_sources(root: &Path) -> crate::Result<()> {
+    let catalog = read_sources(root, &BTreeMap::new())
+        .map_err(|error| Error::new("io", error.to_string()))?;
+    if !catalog.diagnostics.is_empty() {
+        return Err(Error::new(
+            "invalid_document",
+            "Authoritative source validation failed; run robostickies doctor for local diagnostics",
+        ));
+    }
+    Ok(())
+}
+
+fn read_sources(root: &Path, old: &BTreeMap<String, Source>) -> anyhow::Result<Catalog> {
+    let mut sources = BTreeMap::new();
+    let mut diagnostics = vec![];
+    for (directory, visibility, is_tag) in [
+        ("tags", Visibility::Public, true),
+        ("private/tags", Visibility::Private, true),
+        ("notes", Visibility::Public, false),
+        ("private/notes", Visibility::Private, false),
+    ] {
+        scan(
+            root,
+            directory,
+            visibility,
+            is_tag,
+            old,
+            &mut sources,
+            &mut diagnostics,
+        )?;
+    }
+    let mut groups: BTreeMap<String, Vec<Note>> = BTreeMap::new();
+    let mut tags = BTreeMap::new();
+    for source in sources.values() {
+        if let Some(diagnostic) = &source.diagnostic {
+            diagnostics.push(diagnostic.clone());
+        }
+        match &source.entity {
+            Some(Entity::Note(note)) => {
+                groups
+                    .entry(note.id.clone())
+                    .or_default()
+                    .push(note.clone());
+            }
+            Some(Entity::Tag(tag)) => {
+                tags.insert(tag.name.clone(), tag.clone());
+            }
+            None => {}
+        }
+    }
+    let mut notes = BTreeMap::new();
+    for (id, copies) in groups {
+        if copies.len() == 1 {
+            notes.insert(id, copies[0].clone());
+            continue;
+        }
+        // A local conflict must not change public selection or expose private details.
+        let public: Vec<_> = copies
+            .iter()
+            .filter(|note| note.visibility == Visibility::Public)
+            .collect();
+        diagnostics.push(Diagnostic {
+            path: copies[0].path.clone(),
+            code: "duplicate_id".into(),
+            message: "Duplicate note ID; give manually copied notes a new UUID".into(),
+            // Canonical filenames allow at most one file per namespace.
+            // A duplicate therefore always involves private storage.
+            visibility: Visibility::Private,
+        });
+        if public.len() == 1 {
+            notes.insert(id, public[0].clone());
+        }
+    }
+    for note in notes.values() {
+        for tag in &note.tags {
+            if !tags.contains_key(tag) {
+                diagnostics.push(Diagnostic {
+                    path: note.path.clone(),
+                    code: "unknown_tag".into(),
+                    message: format!(
+                        "Undefined tag {tag:?}; create its definition or update this note"
+                    ),
+                    visibility: note.visibility,
+                });
+            }
+        }
+        if note.visibility == Visibility::Private && !note.path.starts_with("private/") {
+            diagnostics.push(Diagnostic { path: note.path.clone(), code: "misplaced_private_note".into(),
+                message: "This note has a private tag but is outside private/; move it into private/notes/".into(), visibility: Visibility::Private });
+        }
+    }
+    Ok(Catalog {
+        sources,
+        notes,
+        tags,
+        diagnostics,
+    })
+}
+
 fn quarantine(root: &Path) -> std::io::Result<()> {
     let backup = root.join("cache/index.failed.redb");
     if backup.exists() {
@@ -511,6 +547,7 @@ mod tests {
         store.init(InitOptions::default()).unwrap();
         let note = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Cache recovery fixture".into(),
                 tags: vec![],
                 private: Some(true),
@@ -628,6 +665,7 @@ mod recovery_tests {
         store.init(InitOptions::default()).unwrap();
         let note = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Table recovery fixture".into(),
                 tags: vec!["papercut".into()],
                 private: Some(true),
@@ -737,6 +775,7 @@ mod recovery_tests {
         store.init(InitOptions::default()).unwrap();
         let note = store
             .create_note(CreateNote {
+                body_format: None,
                 body: "Derived rows fixture".into(),
                 tags: vec![],
                 private: Some(true),

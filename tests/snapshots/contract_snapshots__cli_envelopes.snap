@@ -1,0 +1,31 @@
+---
+source: tests/contract_snapshots.rs
+assertion_line: 131
+expression: "json!({\"saved\": saved, \"error\": error, \"error_exit\": failed.status.code()})"
+---
+{
+  "error": {
+    "error": {
+      "code": "invalid_input",
+      "message": "body_format must be a nonblank string"
+    }
+  },
+  "error_exit": 65,
+  "saved": {
+    "note": {
+      "body": "Synthetic contract example\n",
+      "created_at": "<timestamp>",
+      "id": "<uuid>",
+      "metadata": {
+        "body_format": "text"
+      },
+      "path": "private/notes/<uuid>.md",
+      "revision": "<revision>",
+      "status": "active",
+      "tags": [],
+      "updated_at": "<timestamp>",
+      "visibility": "private"
+    },
+    "warnings": []
+  }
+}
