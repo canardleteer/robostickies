@@ -462,6 +462,7 @@ mod tests {
         assert!(atomic_write(&path.join("child"), "text", true).is_err());
         assert!(safe_path(temp.path(), Path::new("../escape")).is_err());
         assert!(safe_path(temp.path(), &path).is_err());
+        #[cfg(unix)]
         assert!(safe_path(temp.path(), Path::new("file.md/child")).is_err());
     }
 }
