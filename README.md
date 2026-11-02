@@ -1,8 +1,9 @@
 # robostickies
 
-Brief repository notes for humans and agents, available through a `clap` CLI and
-an `rmcp` stdio server. Capture what gets in the way (`papercut`), what helps
-(`paperclip`), and general observations with your own tags.
+Enables taking brief repository notes for humans and agents, during development
+and available through a CLI interface and an MCP `stdio` server. Capture what
+gets in the way (`papercut`), what helps (`paperclip`), and general
+observations or todo tasks with your own tags.
 
 Markdown with YAML frontmatter is the source of truth. Shared files can travel
 in Git history; private definitions and notes live in an ignored namespace.
@@ -63,6 +64,8 @@ to use it without adding tracked integration files.
   repository context and tag guidance.
 - [Diagnostics and cache recovery](docs/usage/maintenance.md) validate note
   sources and Git privacy protections, and rebuild the disposable index.
+- [Development tasks](docs/usage/development.md) provide workspace checks,
+  coverage reports, and profiling against synthetic notes.
 
 ## Development
 
@@ -71,9 +74,14 @@ tests use Cargo's built binary and isolated stores.
 
 ```sh
 cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo xtask check
 ```
+
+`cargo xtask ci` runs the same checks. Use `--only=fmt,clippy,test` or
+`--exclude=clippy` to select checks. The
+[development guide](docs/usage/development.md) covers feature selection,
+coverage, profiling, and optional tool installation. No container engine is
+required.
 
 Agent development and verification instructions are in [AGENTS.md](AGENTS.md).
 Integration test conventions are in [tests/AGENTS.md](tests/AGENTS.md).
