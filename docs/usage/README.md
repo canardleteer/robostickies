@@ -15,6 +15,6 @@ the guide for the task:
 | [Diagnostics and cache recovery](maintenance.md) | Validate sources and recover the index |
 | [Store versions and upgrades](upgrades.md) | Inspect data versions and migrate an existing store |
 | [Development tasks](development.md) | Run workspace checks, coverage, and profiling |
-| [Publishing](publishing.md) | Publish release candidates through the temporary manual workflow |
+| [Publishing](publishing.md) | Set up release-plz, Trusted Publishing, and RC/stable validation |
 
 For work on robostickies itself, see the [development guide](development.md).
