@@ -134,6 +134,16 @@ pub fn run(cli: Cli) -> Result<()> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask is a direct workspace member");
+    run_at(root, cli)
+}
+
+/// Execute a task in an explicitly selected workspace using robostickies policy.
+/// Reports are replaced beneath that root; subprocesses inherit the caller's
+/// environment. This supports isolated development tooling and automation.
+///
+/// # Errors
+/// Returns the same tool, subprocess, selection, and report failures as [`run`].
+pub fn run_at(root: &Path, cli: Cli) -> Result<()> {
     match cli.task {
         Task::Check(args) => check::run(root, &args),
         Task::Coverage { selection, open } => coverage::run(root, &selection, open),

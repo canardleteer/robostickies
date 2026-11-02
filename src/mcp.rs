@@ -14,6 +14,7 @@ use crate::{
     Store,
     model::{
         CreateNote, CreateTag, InitOptions, PublishNote, Query, ReviewQuery, Scope, UpdateNote,
+        UpgradeOptions,
     },
     store::DISCOVERY_GUIDANCE,
 };
@@ -68,18 +69,14 @@ impl StickyServer {
         operation: impl FnOnce(Store) -> crate::Result<T> + Send + 'static,
     ) -> CallToolResult {
         let store = self.store.clone();
-        let result = tokio::task::spawn_blocking(move || operation(store)).await;
-        match result {
-            Ok(Ok(value)) => match serde_json::to_value(value) {
+        match blocking(store, operation).await {
+            Ok(value) => match serde_json::to_value(value) {
                 Ok(value) => CallToolResult::structured(value),
                 Err(_) => CallToolResult::structured_error(
                     serde_json::json!({"error": {"code": "internal", "message": "Cannot encode tool result"}}),
                 ),
             },
-            Ok(Err(error)) => CallToolResult::structured_error(serde_json::json!({"error": error})),
-            Err(_) => CallToolResult::structured_error(
-                serde_json::json!({"error": {"code": "internal", "message": "Repository operation could not complete"}}),
-            ),
+            Err(error) => CallToolResult::structured_error(serde_json::json!({"error": error})),
         }
     }
 }
@@ -98,6 +95,14 @@ impl StickyServer {
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::InitResult>(), annotations(destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn init_store(&self, Parameters(input): Parameters<InitOptions>) -> CallToolResult {
         self.execute(move |store| store.init(input)).await
+    }
+
+    /// Upgrade the shared store data version for both namespaces. Set dry_run=true
+    /// to preview without changing sources. Notes and customized guidance are preserved.
+    #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::version::UpgradeResult>(), annotations(destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
+    async fn upgrade_store(&self, Parameters(input): Parameters<UpgradeOptions>) -> CallToolResult {
+        self.execute(move |store| store.upgrade(input.dry_run))
+            .await
     }
 
     /// Record a brief observation. Prefer papercut for friction and paperclip for
@@ -252,25 +257,49 @@ impl ServerHandler for StickyServer {
         let uri = request.uri;
         let request_uri = uri.clone();
         let store = self.store.clone();
-        let text = tokio::task::spawn_blocking(move || -> crate::Result<String> {
-            let value = match request_uri.as_str() {
-                "robostickies://context" => serde_json::to_value(store.context(Scope::All)?),
-                "robostickies://guidance" => serde_json::to_value(serde_json::json!({"guidance": store.context(Scope::Public)?.guidance, "agents_md": store.agents_snippet()})),
+        let text = blocking(store, move |store| -> crate::Result<String> {
+            match request_uri.as_str() {
+                "robostickies://context" => resource_json(store.context(Scope::All)?),
+                "robostickies://guidance" => resource_json(serde_json::json!({"guidance": store.context(Scope::Public)?.guidance, "agents_md": store.agents_snippet()})),
                 "robostickies://tags" => {
-                    if store.context(Scope::Public)?.initialized { serde_json::to_value(store.list_tags(Scope::All, None)?) }
-                    else { serde_json::to_value(serde_json::json!({"tags": [], "initialized": false, "guidance": DISCOVERY_GUIDANCE})) }
+                    if store.context(Scope::Public)?.initialized { resource_json(store.list_tags(Scope::All, None)?) }
+                    else { resource_json(serde_json::json!({"tags": [], "initialized": false, "guidance": DISCOVERY_GUIDANCE})) }
                 },
-                "robostickies://config" => serde_json::to_value(store.configuration()?),
-                _ => return Err(crate::Error::new("not_found", "Unknown resource URI; list resources to discover supported URIs")),
-            }.map_err(|_| crate::Error::new("internal", "Cannot encode resource"))?;
-            serde_json::to_string_pretty(&value).map_err(|_| crate::Error::new("internal", "Cannot encode resource"))
-        }).await.map_err(|_| McpError::internal_error("Resource operation could not complete", None))?
-            .map_err(|error| McpError::invalid_params(error.message, Some(serde_json::json!({"code": error.code}))))?;
+                "robostickies://config" => resource_json(store.configuration()?),
+                _ => Err(crate::Error::new("not_found", "Unknown resource URI; list resources to discover supported URIs")),
+            }
+        }).await.map_err(resource_error)?;
         Ok(ReadResourceResult::new(vec![
             ResourceContents::text(text, uri).with_mime_type("application/json"),
         ])
         .into())
     }
+}
+
+async fn blocking<T: Send + 'static>(
+    store: Store,
+    operation: impl FnOnce(Store) -> crate::Result<T> + Send + 'static,
+) -> crate::Result<T> {
+    tokio::task::spawn_blocking(move || operation(store))
+        .await
+        .map_err(|_| crate::Error::new("internal", "Repository operation could not complete"))?
+}
+
+fn resource_json(value: impl Serialize) -> crate::Result<String> {
+    serde_json::to_string_pretty(&value)
+        .map_err(|_| crate::Error::new("internal", "Cannot encode resource"))
+}
+
+fn resource_error(error: crate::Error) -> McpError {
+    if error.code == "internal" {
+        McpError::internal_error(error.message, None)
+    } else {
+        McpError::invalid_params(error.message, Some(serde_json::json!({"code": error.code})))
+    }
+}
+
+fn transport_error(error: impl std::fmt::Display) -> crate::Error {
+    crate::Error::new("mcp", format!("MCP transport failed: {error}"))
 }
 
 /// Serve one repository over stdio until EOF, cancellation, or process interruption.
@@ -279,10 +308,49 @@ pub async fn serve(store: Store) -> crate::Result<()> {
     let service = StickyServer::new(store)
         .serve(rmcp::transport::stdio())
         .await
-        .map_err(|e| crate::Error::new("mcp", format!("MCP startup failed: {e}")))?;
+        .map_err(transport_error)?;
     tokio::select! {
-        result = service.waiting() => { result.map_err(|e| crate::Error::new("mcp", format!("MCP service failed: {e}")))?; },
+        result = service.waiting() => { result.map_err(transport_error)?; },
         result = tokio::signal::ctrl_c() => { result.map_err(crate::Error::from)?; },
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fails;
+    impl Serialize for Fails {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> std::result::Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("fixture encoding failure"))
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_encoding_and_worker_panics_return_structured_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let server = StickyServer::new(Store::with_user_config(temp.path(), None).unwrap());
+        let failed = server.execute(|_| Ok(Fails)).await;
+        assert_eq!(failed.is_error, Some(true));
+        assert_eq!(
+            failed.structured_content.unwrap()["error"]["code"],
+            "internal"
+        );
+        fn panic_worker(_: Store) -> crate::Result<()> {
+            panic!("fixture worker failure")
+        }
+        let panicked = server.execute(panic_worker).await;
+        assert_eq!(panicked.is_error, Some(true));
+        assert_eq!(
+            panicked.structured_content.unwrap()["error"]["message"],
+            "Repository operation could not complete"
+        );
+        assert_eq!(resource_json(Fails).unwrap_err().code, "internal");
+        let internal = resource_error(crate::Error::new("internal", "worker failed"));
+        assert_eq!(internal.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        let invalid = resource_error(crate::Error::new("not_found", "unknown URI"));
+        assert_eq!(invalid.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(transport_error("closed stream").code, "mcp");
+    }
 }

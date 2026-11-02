@@ -804,6 +804,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -1425,6 +1426,7 @@ dependencies = [
  "clap",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

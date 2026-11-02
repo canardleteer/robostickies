@@ -391,7 +391,7 @@ async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
                 "publish_note" => json!({"id": id, "dry_run": true, "expected_revision": saved["note"]["revision"]}),
                 "create_tag" => json!({"name": "unexpected", "topic": "Unexpected tag"}),
                 "get_context" | "init_store" | "list_notes" | "review_notes" | "list_tags"
-                | "get_config" | "validate_store" | "rebuild_index" => json!({}),
+                | "get_config" | "validate_store" | "rebuild_index" | "upgrade_store" => json!({}),
                 name => panic!("Add a valid input for the new tool {name}"),
             };
             arguments["unexpected_field"] = json!(true);
@@ -708,6 +708,8 @@ async fn mcp_edits_crlf_nested_frontmatter_and_publishes_a_clean_copy() {
         for comment in ["# header comment", "# tag comment", "# nested comment"] {
             assert!(text.contains(comment));
         }
+        assert!(!text.replace("\r\n", "").contains('\n'));
+        assert_eq!(edited["body"], "Edited private fixture\r\n");
         assert_eq!(error_mcp(&client, "update_note", json!({
             "id": id, "body": "Stale edit", "expected_revision": source["revision"]
         })).await["error"]["code"], "conflict");
@@ -1324,4 +1326,791 @@ async fn lock_contention_is_bounded_and_process_exit_releases_the_lock() {
     })
     .await
     .expect("Lock contention test timed out");
+}
+
+#[tokio::test]
+async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        assert_eq!(error_mcp(&client, "upgrade_store", json!({})).await["error"]["code"], "not_initialized");
+        call_mcp(&client, "init_store", json!({})).await;
+        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha2");
+        let config = temp.path().join(".robostickies/config.toml");
+        let legacy = "\u{feff}# Preserve team settings\nformat_version = 1\n\n[tags]\ndefault_private = false\n";
+        fs::write(&config, legacy).unwrap();
+        let tools = client.list_all_tools().await.unwrap();
+        let upgrade = tools.iter().find(|t| t.name == "upgrade_store").unwrap();
+        assert!(upgrade.input_schema["properties"]["dry_run"].is_object());
+        for name in ["get_context", "get_config", "validate_store"] {
+            let value = call_mcp(&client, name, json!({})).await;
+            assert_eq!(value["data_version"], "v1alpha1");
+            assert_eq!(value["upgrade_available"], true);
+        }
+        assert_eq!(resource_mcp(&client, "robostickies://config").await["data_version"], "v1alpha1");
+        let failed = command(temp.path()).args(["get", "invalid"]).bounded_output().await.unwrap();
+        assert_eq!(failed.status.code(), Some(65));
+        assert_eq!(serde_json::from_slice::<Value>(&failed.stderr).unwrap()["error"]["code"], "invalid_input");
+        let mut human = Command::new(env!("CARGO_BIN_EXE_robostickies"));
+        let output = human.args(["--repo", temp.path().to_str().unwrap(), "--no-user-config", "context", "--scope", "public"]).bounded_output().await.unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("robostickies upgrade"));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("Notice:"));
+        let output = command(temp.path()).args(["add", "Legacy write", "--private"]).bounded_output().await.unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("v1alpha1"));
+        let saved: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(saved.as_object().unwrap().len(), 2);
+        assert!(saved["note"].get("data_version").is_none());
+        let id = saved["note"]["id"].as_str().unwrap();
+        let path = temp.path().join(".robostickies").join(saved["note"]["path"].as_str().unwrap());
+        let original = fs::read(&path).unwrap();
+        let preview = call_mcp(&client, "upgrade_store", json!({"dry_run": true})).await;
+        assert_eq!(preview, json!({"source_version":"v1alpha1", "target_version":"v1alpha2", "wrote":false, "dry_run":true}));
+        assert_eq!(fs::read_to_string(&config).unwrap(), legacy);
+        let preview = cli(temp.path(), &["upgrade", "--dry-run"]).await;
+        assert_eq!(preview["wrote"], false);
+        assert_eq!(fs::read_to_string(&config).unwrap(), legacy);
+        let second = start_mcp(temp.path()).await;
+        let (first, second_result, third) = tokio::join!(
+            call_mcp(&client, "upgrade_store", json!({})),
+            call_mcp(&second, "upgrade_store", json!({})),
+            cli(temp.path(), &["upgrade"]),
+        );
+        assert_eq!([first, second_result, third].iter().filter(|v| v["wrote"] == true).count(), 1);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(call_mcp(&client, "get_note", json!({"id":id})).await["revision"], saved["note"]["revision"]);
+        for name in ["get_context", "get_config", "validate_store"] {
+            let value = call_mcp(&second, name, json!({})).await;
+            assert_eq!(value["data_version"], "v1alpha2");
+            assert_eq!(value["upgrade_available"], false);
+        }
+        let output = command(temp.path()).args(["config", "show"]).bounded_output().await.unwrap();
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        fs::write(&config, "format_version = 1\ndata_version = 'v9'\n").unwrap();
+        assert_eq!(error_mcp(&client, "upgrade_store", json!({})).await["error"]["code"], "configuration");
+        let output = command(temp.path()).arg("upgrade").bounded_output().await.unwrap();
+        assert_eq!(output.status.code(), Some(78));
+        assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"], "configuration");
+        assert_eq!(fs::read_to_string(&config).unwrap(), "format_version = 1\ndata_version = 'v9'\n");
+        client.cancel().await.unwrap();
+        second.cancel().await.unwrap();
+    }).await.expect("migration interfaces timed out");
+}
+
+async fn human(repo: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_robostickies"))
+        .args(["--repo", repo.to_str().unwrap(), "--no-user-config"])
+        .args(args)
+        .bounded_output()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn human_cli_renders_workflows_diagnostics_and_errors() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let text = human(root, &["context"]).await;
+        assert!(text.status.success());
+        assert!(String::from_utf8_lossy(&text.stdout).contains("Not initialized"));
+        for args in [
+            vec!["init", "--agents"],
+            vec![
+                "tags",
+                "create",
+                "tools",
+                "--topic",
+                "Tools",
+                "--read-on-start",
+            ],
+            vec!["tags", "create", "ordinary", "--topic", "Ordinary"],
+        ] {
+            assert!(human(root, &args).await.status.success());
+        }
+        let input = root.join("input.md");
+        fs::write(&input, "Human file body").unwrap();
+        let output = human(
+            root,
+            &[
+                "add",
+                "--file",
+                input.to_str().unwrap(),
+                "--tag",
+                "tools",
+                "--public",
+            ],
+        )
+        .await;
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Tags: tools"));
+        let public = cli(root, &["add", "Untagged public note"]).await;
+        let local = cli(
+            root,
+            &["add", "Local note", "--private", "--tag", "paperclip"],
+        )
+        .await;
+        let id = public["note"]["id"].as_str().unwrap();
+        for args in [
+            vec!["get", id],
+            vec!["tags", "list"],
+            vec!["tags", "get", "tools"],
+            vec!["list", "--limit", "1"],
+            vec!["search", "absent marker"],
+            vec!["review"],
+            vec!["context"],
+            vec!["config", "show"],
+            vec!["doctor"],
+            vec!["reindex"],
+        ] {
+            let output = human(root, &args).await;
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(!output.stdout.is_empty());
+            if args[0] == "list" {
+                assert!(String::from_utf8_lossy(&output.stdout).contains("Next cursor:"));
+            }
+            if args[0] == "get" {
+                assert!(String::from_utf8_lossy(&output.stdout).contains("untagged"));
+            }
+        }
+        let revision = public["note"]["revision"].as_str().unwrap();
+        assert!(
+            human(
+                root,
+                &[
+                    "update",
+                    id,
+                    "Human edit",
+                    "--clear-tags",
+                    "--if-match",
+                    revision
+                ]
+            )
+            .await
+            .status
+            .success()
+        );
+        let updated = cli(root, &["get", id]).await;
+        assert!(
+            human(
+                root,
+                &[
+                    "archive",
+                    id,
+                    "--if-match",
+                    updated["revision"].as_str().unwrap()
+                ]
+            )
+            .await
+            .status
+            .success()
+        );
+        let archived = cli(root, &["get", id]).await;
+        assert!(
+            human(
+                root,
+                &[
+                    "unarchive",
+                    id,
+                    "--if-match",
+                    archived["revision"].as_str().unwrap()
+                ]
+            )
+            .await
+            .status
+            .success()
+        );
+        let local_id = local["note"]["id"].as_str().unwrap();
+        let local_revision = local["note"]["revision"].as_str().unwrap();
+        for dry in [true, false] {
+            let mut args = vec![
+                "publish",
+                local_id,
+                "Reviewed human copy",
+                "--clear-tags",
+                "--if-match",
+                local_revision,
+            ];
+            if dry {
+                args.push("--dry-run");
+            }
+            let output = human(root, &args).await;
+            assert!(output.status.success());
+            assert!(String::from_utf8_lossy(&output.stdout).contains(if dry {
+                "Preview"
+            } else {
+                "Published public copy"
+            }));
+        }
+        for (args, code) in [
+            (vec!["add"], 65),
+            (vec!["add", "--file", "missing.md"], 74),
+            (vec!["get", "00000000-0000-0000-0000-000000000001"], 66),
+        ] {
+            let output = human(root, &args).await;
+            assert_eq!(output.status.code(), Some(code));
+            assert!(!output.stderr.is_empty());
+        }
+        let mut child = Command::new(env!("CARGO_BIN_EXE_robostickies"))
+            .args([
+                "--repo",
+                root.to_str().unwrap(),
+                "--no-user-config",
+                "add",
+                "--file",
+                "-",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = support::collect(
+            &mut child,
+            Some(b"File stdin body"),
+            support::PROCESS_TIMEOUT,
+        )
+        .await
+        .unwrap();
+        assert!(output.status.success());
+        fs::write(
+            root.join(".robostickies/tags/broken.md"),
+            "---\ntopic: ''\n---\n",
+        )
+        .unwrap();
+        for args in [vec!["tags", "list"], vec!["context"], vec!["list"]] {
+            let output = human(root, &args).await;
+            assert!(output.status.success());
+            assert!(String::from_utf8_lossy(&output.stdout).contains("broken.md"));
+        }
+        let output = human(root, &["doctor"]).await;
+        assert_eq!(output.status.code(), Some(65));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("problems found"));
+        fs::remove_file(root.join(".robostickies/tags/broken.md")).unwrap();
+        fs::write(
+            root.join(".robostickies/config.toml"),
+            "format_version = 1\n",
+        )
+        .unwrap();
+        for (args, expected) in [
+            (vec!["upgrade", "--dry-run"], "dry run"),
+            (vec!["upgrade"], "upgraded"),
+            (vec!["upgrade"], "already current"),
+        ] {
+            let output = human(root, &args).await;
+            assert!(output.status.success());
+            assert!(String::from_utf8_lossy(&output.stdout).contains(expected));
+        }
+        let index = root.join(".robostickies/cache/index.redb");
+        fs::remove_file(&index).unwrap();
+        fs::create_dir(&index).unwrap();
+        let output = human(root, &["add", "Saved with cache warning", "--private"]).await;
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Warning:"));
+    })
+    .await
+    .expect("human CLI workflows timed out");
+}
+
+#[tokio::test]
+async fn broken_cli_stdout_and_mcp_startup_have_stable_errors() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        cli(temp.path(), &["init"]).await;
+        let mut child = command(temp.path())
+            .arg("context")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let output = support::collect(&mut child, None, support::PROCESS_TIMEOUT)
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(74));
+        let failed = command(temp.path())
+            .arg("mcp")
+            .bounded_output()
+            .await
+            .unwrap();
+        assert_eq!(failed.status.code(), Some(1));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&failed.stderr).unwrap()["error"]["code"],
+            "mcp"
+        );
+        let client = start_mcp(temp.path()).await;
+        let unknown = client
+            .read_resource(ReadResourceRequestParams::new("robostickies://missing"))
+            .await
+            .unwrap_err();
+        assert!(unknown.to_string().contains("Unknown resource URI"));
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("transport error tests timed out");
+}
+
+#[tokio::test]
+async fn cli_configuration_failures_preserve_sources_across_layers() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        cli(root, &["init"]).await;
+        let config = root.join(".robostickies/config.toml");
+        let current = fs::read_to_string(&config).unwrap();
+        let private = root.join(".robostickies/private/config.toml");
+        let user = root.join("user.toml");
+        for path in [&private, &user] {
+            for text in [
+                "format_version = 2\n",
+                "[tags]\nprivate_patterns = ['[']\n",
+                "data_version = 'v1alpha2'\n",
+                "unexpected = 1\n",
+            ] {
+                fs::write(path, text).unwrap();
+                let mut process = Command::new(env!("CARGO_BIN_EXE_robostickies"));
+                process.args(["--repo", root.to_str().unwrap(), "--json"]);
+                if path == &user {
+                    process.args(["--user-config", user.to_str().unwrap()]);
+                } else {
+                    process.arg("--no-user-config");
+                }
+                let output = process
+                    .args(["config", "show"])
+                    .bounded_output()
+                    .await
+                    .unwrap();
+                assert_eq!(output.status.code(), Some(78));
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],
+                    "configuration"
+                );
+                assert_eq!(fs::read_to_string(&config).unwrap(), current);
+                assert_eq!(fs::read_to_string(path).unwrap(), text);
+            }
+            fs::remove_file(path).unwrap();
+        }
+        fs::remove_file(&config).unwrap();
+        fs::create_dir(&config).unwrap();
+        let output = command(root)
+            .args(["config", "show"])
+            .bounded_output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(78));
+        fs::remove_dir(&config).unwrap();
+        fs::write(config, current).unwrap();
+        assert!(cli(root, &["doctor"]).await["healthy"].as_bool().unwrap());
+    })
+    .await
+    .expect("configuration errors timed out");
+}
+
+#[tokio::test]
+async fn uninitialized_operations_have_the_same_cli_and_mcp_failure_contract() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        let id = "00000000-0000-0000-0000-000000000001";
+        for (name, input, args) in [
+            (
+                "create_note",
+                json!({"body":"Rejected fixture", "private":true}),
+                vec!["add", "Rejected fixture", "--private"],
+            ),
+            ("get_note", json!({"id":id}), vec!["get", id]),
+            (
+                "update_note",
+                json!({"id":id,"expected_revision":"revision"}),
+                vec!["update", id, "--if-match", "revision"],
+            ),
+            (
+                "publish_note",
+                json!({"id":id,"dry_run":true,"expected_revision":"revision"}),
+                vec!["publish", id, "--dry-run", "--if-match", "revision"],
+            ),
+            ("list_notes", json!({}), vec!["list"]),
+            ("review_notes", json!({}), vec!["review"]),
+            (
+                "create_tag",
+                json!({"name":"tools","topic":"Tools","private":true}),
+                vec!["tags", "create", "tools", "--topic", "Tools", "--private"],
+            ),
+            (
+                "get_tag",
+                json!({"name":"papercut"}),
+                vec!["tags", "get", "papercut"],
+            ),
+            ("list_tags", json!({}), vec!["tags", "list"]),
+            ("validate_store", json!({}), vec!["doctor"]),
+            ("rebuild_index", json!({}), vec!["reindex"]),
+            ("upgrade_store", json!({}), vec!["upgrade"]),
+        ] {
+            assert_eq!(
+                error_mcp(&client, name, input).await["error"]["code"],
+                "not_initialized"
+            );
+            let output = command(temp.path())
+                .args(args)
+                .bounded_output()
+                .await
+                .unwrap();
+            assert_eq!(output.status.code(), Some(66));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],
+                "not_initialized"
+            );
+            assert!(!temp.path().join(".robostickies").exists());
+        }
+        fs::create_dir_all(temp.path().join(".robostickies/private")).unwrap();
+        fs::write(
+            temp.path().join(".robostickies/private/config.toml"),
+            "PRIVATE_CONFIG_SENTINEL = [\n",
+        )
+        .unwrap();
+        assert_eq!(
+            call_mcp(&client, "get_context", json!({})).await["initialized"],
+            false
+        );
+        assert_eq!(cli(temp.path(), &["context"]).await["initialized"], false);
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("absent-store interfaces timed out");
+}
+
+#[tokio::test]
+async fn cache_table_faults_and_missing_definitions_refresh_through_live_mcp() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let saved = call_mcp(
+            &client,
+            "create_note",
+            json!({"body":"MCP recovery fixture", "tags":["papercut"], "private":true}),
+        )
+        .await;
+        let root = temp.path().join(".robostickies");
+        let source = root.join(saved["note"]["path"].as_str().unwrap());
+        let original = fs::read(&source).unwrap();
+        for table in [
+            "metadata_v1",
+            "files_v1",
+            "notes_v1",
+            "tags_v1",
+            "dates_v1",
+            "filters_v1",
+        ] {
+            let db = redb::Database::open(root.join("cache/index.redb")).unwrap();
+            let tx = db.begin_write().unwrap();
+            if table == "filters_v1" {
+                tx.delete_multimap_table(redb::MultimapTableDefinition::<&str, &str>::new(table))
+                    .unwrap();
+            } else if table == "metadata_v1" {
+                tx.delete_table(redb::TableDefinition::<&str, u64>::new(table))
+                    .unwrap();
+            } else if table == "dates_v1" {
+                tx.delete_table(redb::TableDefinition::<&str, &str>::new(table))
+                    .unwrap();
+            } else {
+                tx.delete_table(redb::TableDefinition::<&str, &[u8]>::new(table))
+                    .unwrap();
+            }
+            tx.open_table(redb::TableDefinition::<u64, u64>::new(table))
+                .unwrap()
+                .insert(1, 1)
+                .unwrap();
+            tx.commit().unwrap();
+            drop(db);
+            assert_eq!(call_mcp(&client, "list_notes", json!({})).await["total"], 1);
+            assert_eq!(fs::read(&source).unwrap(), original);
+        }
+        for (table, key, tool) in [
+            (
+                "notes_v1",
+                saved["note"]["id"].as_str().unwrap(),
+                "list_notes",
+            ),
+            ("tags_v1", "papercut", "list_tags"),
+        ] {
+            let db = redb::Database::open(root.join("cache/index.redb")).unwrap();
+            let tx = db.begin_write().unwrap();
+            tx.open_table(redb::TableDefinition::<&str, &[u8]>::new(table))
+                .unwrap()
+                .insert(key, b"invalid json".as_slice())
+                .unwrap();
+            tx.commit().unwrap();
+            drop(db);
+            assert_eq!(
+                error_mcp(&client, tool, json!({})).await["error"]["code"],
+                "index"
+            );
+            assert_eq!(
+                error_mcp(&client, "validate_store", json!({})).await["error"]["code"],
+                "index"
+            );
+            if table == "tags_v1" {
+                assert_eq!(
+                    error_mcp(&client, "get_context", json!({})).await["error"]["code"],
+                    "index"
+                );
+            }
+            assert_eq!(
+                call_mcp(&client, "rebuild_index", json!({})).await["healthy"],
+                true
+            );
+            assert_eq!(fs::read(&source).unwrap(), original);
+        }
+        let db = redb::Database::open(root.join("cache/index.redb")).unwrap();
+        let tx = db.begin_write().unwrap();
+        tx.open_table(redb::TableDefinition::<&str, &str>::new("dates_v1"))
+            .unwrap()
+            .insert(
+                "2026-01-01T00:00:00.000000000Z/00000000-0000-0000-0000-000000000001",
+                "00000000-0000-0000-0000-000000000001",
+            )
+            .unwrap();
+        tx.commit().unwrap();
+        drop(db);
+        assert_eq!(
+            call_mcp(&client, "list_notes", json!({"status":"all"})).await["total"],
+            1
+        );
+        fs::remove_file(root.join("tags/papercut.md")).unwrap();
+        let local = call_mcp(&client, "list_notes", json!({})).await;
+        assert!(
+            local["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "unknown_tag")
+        );
+        assert_eq!(
+            call_mcp(&client, "list_notes", json!({"scope":"public"})).await["diagnostics"],
+            json!([])
+        );
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("MCP cache faults timed out");
+}
+
+#[tokio::test]
+async fn doctor_identifies_missing_private_exclusion_while_cache_remains_ignored() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        init_git(temp.path()).await;
+        cli(temp.path(), &["init"]).await;
+        let ignore = temp.path().join(".robostickies/.gitignore");
+        fs::write(&ignore, "/cache/\n").unwrap();
+        let client = start_mcp(temp.path()).await;
+        let report = call_mcp(&client, "validate_store", json!({})).await;
+        assert_eq!(report["healthy"], false);
+        assert!(
+            report["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["code"] == "missing_ignore")
+        );
+        let output = command(temp.path())
+            .arg("doctor")
+            .bounded_output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(65));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stdout).unwrap()["healthy"],
+            false
+        );
+        call_mcp(&client, "init_store", json!({})).await;
+        assert_eq!(
+            call_mcp(&client, "validate_store", json!({})).await["healthy"],
+            true
+        );
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("doctor exclusion test timed out");
+}
+
+#[tokio::test]
+async fn public_reads_do_not_export_or_depend_on_private_configuration_errors() {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        for layer in ["private", "user"] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path();
+            cli(root, &["init"]).await;
+            cli(root, &["add", "Public review fixture", "--public"]).await;
+            cli(root, &["add", "PRIVATE_CONFIG_SENTINEL", "--private"]).await;
+            let config = if layer == "private" {
+                root.join(".robostickies/private/config.toml")
+            } else {
+                root.join("user.toml")
+            };
+            let mut process = Command::new(env!("CARGO_BIN_EXE_robostickies"));
+            process.kill_on_drop(true).current_dir(root);
+            if layer == "user" {
+                process.args(["--user-config", config.to_str().unwrap()]);
+            } else {
+                process.arg("--no-user-config");
+            }
+            process.arg("mcp");
+            let client = ().serve(TokioChildProcess::new(process).unwrap()).await.unwrap();
+            for text in [
+                "data_version = 'PRIVATE_CONFIG_SENTINEL'\n",
+                "[tags]\nprivate_patterns = ['PRIVATE_CONFIG_SENTINEL[']\n",
+                "PRIVATE_CONFIG_SENTINEL = [\n",
+            ] {
+                fs::write(&config, text).unwrap();
+                assert_eq!(
+                    error_mcp(&client, "get_config", json!({})).await["error"]["code"],
+                    "configuration"
+                );
+                for (tool, input, args) in [
+                    (
+                        "get_context",
+                        json!({"scope":"public"}),
+                        vec!["context", "--scope", "public"],
+                    ),
+                    (
+                        "list_tags",
+                        json!({"scope":"public"}),
+                        vec!["tags", "list", "--scope", "public"],
+                    ),
+                    (
+                        "list_notes",
+                        json!({"scope":"public"}),
+                        vec!["list", "--scope", "public"],
+                    ),
+                    ("review_notes", json!({}), vec!["review"]),
+                ] {
+                    let result = call_mcp(&client, tool, input).await;
+                    assert!(!result.to_string().contains("PRIVATE_CONFIG_SENTINEL"));
+                    if let Some(total) = result.get("total") {
+                        assert_eq!(total, 1);
+                    }
+                    let mut command = Command::new(env!("CARGO_BIN_EXE_robostickies"));
+                    command.args(["--repo", root.to_str().unwrap(), "--json"]);
+                    if layer == "user" {
+                        command.args(["--user-config", config.to_str().unwrap()]);
+                    } else {
+                        command.arg("--no-user-config");
+                    }
+                    let output = command.args(args).bounded_output().await.unwrap();
+                    assert!(
+                        output.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    assert!(
+                        !String::from_utf8_lossy(&output.stdout)
+                            .contains("PRIVATE_CONFIG_SENTINEL")
+                    );
+                    assert!(
+                        !String::from_utf8_lossy(&output.stderr)
+                            .contains("PRIVATE_CONFIG_SENTINEL")
+                    );
+                }
+                assert_eq!(fs::read_to_string(&config).unwrap(), text);
+            }
+            client.cancel().await.unwrap();
+        }
+    })
+    .await
+    .expect("public configuration isolation timed out");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn filesystem_failures_keep_cli_error_json_and_source_files_intact() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        let permissions = fs::metadata(temp.path()).unwrap().permissions();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let output = command(temp.path())
+            .arg("init")
+            .bounded_output()
+            .await
+            .unwrap();
+        fs::set_permissions(temp.path(), permissions).unwrap();
+        assert_eq!(output.status.code(), Some(74));
+        let store = robostickies::Store::with_user_config(temp.path(), None).unwrap();
+        fs::create_dir_all(store.directory().join(".gitignore")).unwrap();
+        let output = command(temp.path())
+            .arg("init")
+            .bounded_output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(74));
+        assert!(!store.directory().join("config.toml").exists());
+        fs::remove_dir(store.directory().join(".gitignore")).unwrap();
+        cli(temp.path(), &["init"]).await;
+        let agents = temp.path().join("AGENTS.md");
+        let broken = "<!-- BEGIN robostickies -->\nKeep this incomplete block.\n";
+        fs::write(&agents, broken).unwrap();
+        let output = command(temp.path())
+            .args(["init", "--agents"])
+            .bounded_output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(78));
+        assert_eq!(fs::read_to_string(&agents).unwrap(), broken);
+        let lock = store.directory().join("cache/store.lock");
+        let permissions = fs::metadata(&lock).unwrap().permissions();
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o444)).unwrap();
+        let output = command(temp.path())
+            .arg("doctor")
+            .bounded_output()
+            .await
+            .unwrap();
+        fs::set_permissions(&lock, permissions).unwrap();
+        assert_eq!(output.status.code(), Some(74));
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), "Outside fixture").unwrap();
+        symlink(
+            outside.path(),
+            store.directory().join("cache/index.failed.redb"),
+        )
+        .unwrap();
+        let output = command(temp.path())
+            .arg("list")
+            .bounded_output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(74));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],
+            "io"
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path()).unwrap(),
+            "Outside fixture"
+        );
+        let linked = tempfile::tempdir().unwrap();
+        let store = robostickies::Store::with_user_config(linked.path(), None).unwrap();
+        fs::create_dir(store.directory()).unwrap();
+        symlink(outside.path(), store.directory().join("config.toml")).unwrap();
+        assert_eq!(
+            store
+                .init(robostickies::model::InitOptions::default())
+                .unwrap_err()
+                .code,
+            "io"
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path()).unwrap(),
+            "Outside fixture"
+        );
+    })
+    .await
+    .expect("filesystem failure tests timed out");
 }

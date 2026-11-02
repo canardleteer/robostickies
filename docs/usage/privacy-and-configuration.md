@@ -76,6 +76,8 @@ explicit option, `.robostickies/private/config.toml`, user config, shared
 `.robostickies/config.toml`, built-ins. Layers replace only specified fields;
 pattern arrays replace the earlier array. Initialization honors these defaults
 for the predefined tags too. Shared configuration requires `format_version = 1`.
+Only shared configuration may set `data_version`; it applies to both namespaces
+and cannot be overridden by other layers. See [store upgrades](upgrades.md).
 
 Inspect resolution with `config show`. Use `--user-config <path>` to select a
 different user file or `--no-user-config` for reproducible automation.

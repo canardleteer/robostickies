@@ -144,16 +144,13 @@ impl Index {
                 .iter()
                 .filter(|note| note.visibility == Visibility::Public)
                 .collect();
-            let visibility = if copies.iter().any(|n| n.visibility == Visibility::Private) {
-                Visibility::Private
-            } else {
-                Visibility::Public
-            };
             diagnostics.push(Diagnostic {
                 path: copies[0].path.clone(),
                 code: "duplicate_id".into(),
                 message: "Duplicate note ID; give manually copied notes a new UUID".into(),
-                visibility,
+                // Canonical filenames allow at most one file per namespace.
+                // A duplicate therefore always involves private storage.
+                visibility: Visibility::Private,
             });
             if public.len() == 1 {
                 notes.insert(id, public[0].clone());
@@ -500,4 +497,335 @@ fn scan(
         sources.insert(path, source);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Store;
+
+    #[test]
+    fn locked_damaged_and_unreadable_cache_paths_recover_without_source_edits() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        let note = store
+            .create_note(CreateNote {
+                body: "Cache recovery fixture".into(),
+                tags: vec![],
+                private: Some(true),
+            })
+            .unwrap()
+            .note;
+        let source = fs::read(store.directory().join(&note.path)).unwrap();
+        let index = store.directory().join("cache/index.redb");
+        let held = Database::open(&index).unwrap();
+        assert!(Index::refresh(&store.directory(), false).is_err());
+        drop(held);
+        // A malformed derived row must not be trusted as a source snapshot.
+        let db = Database::open(&index).unwrap();
+        let tx = db.begin_write().unwrap();
+        tx.open_table(FILES)
+            .unwrap()
+            .insert(note.path.as_str(), b"invalid".as_slice())
+            .unwrap();
+        tx.commit().unwrap();
+        drop(db);
+        assert_eq!(store.list_notes(Query::default()).unwrap().total, 1);
+        for _ in 0..2 {
+            fs::write(&index, "invalid redb").unwrap();
+            assert_eq!(store.list_notes(Query::default()).unwrap().total, 1);
+        }
+        let failed = store.directory().join("cache/index.failed.redb");
+        fs::remove_file(&failed).unwrap();
+        fs::create_dir(&failed).unwrap();
+        fs::write(&index, "invalid redb").unwrap();
+        assert!(Index::refresh(&store.directory(), false).is_err());
+        fs::remove_dir(&failed).unwrap();
+        assert_eq!(store.list_notes(Query::default()).unwrap().total, 1);
+        assert_eq!(
+            fs::read(store.directory().join(&note.path)).unwrap(),
+            source
+        );
+    }
+
+    #[test]
+    fn scans_report_filesystem_failures_and_missing_directories_without_private_leaks() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        fs::remove_dir(store.directory().join("notes")).unwrap();
+        assert_eq!(store.list_notes(Query::default()).unwrap().total, 0);
+        fs::write(store.directory().join("notes"), "not a directory").unwrap();
+        let page = store
+            .list_notes(Query {
+                scope: Some(Scope::Public),
+                ..Query::default()
+            })
+            .unwrap();
+        assert_eq!(page.diagnostics[0].path, "notes");
+        fs::remove_file(store.directory().join("notes")).unwrap();
+        fs::create_dir(store.directory().join("notes")).unwrap();
+        fs::write(store.directory().join("notes/ignored.txt"), "ignored").unwrap();
+        fs::write(store.directory().join("private/notes/binary.md"), [0xff]).unwrap();
+        fs::write(
+            store.directory().join("notes/broken.md"),
+            "---\ninvalid: [\n---\nBody",
+        )
+        .unwrap();
+        fs::create_dir(store.directory().join("tags/directory.md")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            fs::write(
+                store
+                    .directory()
+                    .join("notes")
+                    .join(std::ffi::OsString::from_vec(b"\xff.md".to_vec())),
+                "invalid name",
+            )
+            .unwrap();
+        }
+        let public = store
+            .list_notes(Query {
+                scope: Some(Scope::Public),
+                ..Query::default()
+            })
+            .unwrap();
+        assert!(
+            public
+                .diagnostics
+                .iter()
+                .all(|d| d.visibility == Visibility::Public)
+        );
+        assert!(
+            public
+                .diagnostics
+                .iter()
+                .any(|d| d.path == "notes/broken.md")
+        );
+        assert!(!public.diagnostics.iter().any(|d| d.path.contains("binary")));
+        assert!(
+            store
+                .list_notes(Query::default())
+                .unwrap()
+                .diagnostics
+                .iter()
+                .any(|d| d.path.contains("binary"))
+        );
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::Store;
+
+    #[test]
+    fn incompatible_table_types_are_rebuilt_and_invalid_queries_fail_consistently() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        let note = store
+            .create_note(CreateNote {
+                body: "Table recovery fixture".into(),
+                tags: vec!["papercut".into()],
+                private: Some(true),
+            })
+            .unwrap()
+            .note;
+        let path = store.directory().join("cache/index.redb");
+        let source = fs::read(store.directory().join(&note.path)).unwrap();
+        for name in [
+            "metadata_v1",
+            "files_v1",
+            "notes_v1",
+            "tags_v1",
+            "dates_v1",
+            "filters_v1",
+        ] {
+            let db = Database::open(&path).unwrap();
+            let tx = db.begin_write().unwrap();
+            if name == "filters_v1" {
+                tx.delete_multimap_table(FILTERS).unwrap();
+            } else {
+                match name {
+                    "metadata_v1" => {
+                        tx.delete_table(METADATA).unwrap();
+                    }
+                    "files_v1" => {
+                        tx.delete_table(FILES).unwrap();
+                    }
+                    "notes_v1" => {
+                        tx.delete_table(NOTES).unwrap();
+                    }
+                    "tags_v1" => {
+                        tx.delete_table(TAGS).unwrap();
+                    }
+                    _ => {
+                        assert_eq!(name, "dates_v1");
+                        tx.delete_table(DATES).unwrap();
+                    }
+                }
+            }
+            tx.open_table(TableDefinition::<u64, u64>::new(name))
+                .unwrap()
+                .insert(1, 1)
+                .unwrap();
+            tx.commit().unwrap();
+            drop(db);
+            assert_eq!(store.list_notes(Query::default()).unwrap().total, 1);
+            assert_eq!(
+                fs::read(store.directory().join(&note.path)).unwrap(),
+                source
+            );
+            assert!(store.doctor().unwrap().healthy);
+        }
+        for query in [
+            Query {
+                since: Some("invalid".into()),
+                ..Query::default()
+            },
+            Query {
+                until: Some("invalid".into()),
+                ..Query::default()
+            },
+            Query {
+                cursor: Some("2026-01-01T00:00:00Z/invalid".into()),
+                ..Query::default()
+            },
+            Query {
+                cursor: Some("invalid/00000000-0000-0000-0000-000000000001".into()),
+                ..Query::default()
+            },
+            Query {
+                tags: vec!["Invalid".into()],
+                ..Query::default()
+            },
+            Query {
+                exclude_tags: vec!["Invalid".into()],
+                ..Query::default()
+            },
+            Query {
+                limit: 0,
+                ..Query::default()
+            },
+        ] {
+            assert_eq!(store.list_notes(query).unwrap_err().code, "invalid_input");
+        }
+        // A removed definition must produce a diagnostic in the note's visibility.
+        fs::remove_file(store.directory().join("tags/papercut.md")).unwrap();
+        let page = store.list_notes(Query::default()).unwrap();
+        assert!(page.diagnostics.iter().any(|d| d.code == "unknown_tag"));
+        assert_eq!(page.diagnostics[0].visibility, Visibility::Private);
+        assert!(
+            store
+                .list_notes(Query {
+                    scope: Some(Scope::Public),
+                    ..Query::default()
+                })
+                .unwrap()
+                .diagnostics
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn damaged_derived_json_and_dangling_dates_require_cache_repair_without_source_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        let note = store
+            .create_note(CreateNote {
+                body: "Derived rows fixture".into(),
+                tags: vec![],
+                private: Some(true),
+            })
+            .unwrap()
+            .note;
+        let path = store.directory().join("cache/index.redb");
+        let source = fs::read(store.directory().join(&note.path)).unwrap();
+        for table in ["notes_v1", "tags_v1"] {
+            let db = Database::open(&path).unwrap();
+            let tx = db.begin_write().unwrap();
+            let definition = TableDefinition::<&str, &[u8]>::new(table);
+            let key = if table == "notes_v1" {
+                note.id.as_str()
+            } else {
+                "papercut"
+            };
+            tx.open_table(definition)
+                .unwrap()
+                .insert(key, b"invalid json".as_slice())
+                .unwrap();
+            tx.commit().unwrap();
+            drop(db);
+            if table == "notes_v1" {
+                assert_eq!(
+                    store.list_notes(Query::default()).unwrap_err().code,
+                    "index"
+                );
+            } else {
+                assert_eq!(store.list_tags(Scope::All, None).unwrap_err().code, "index");
+            }
+            assert_eq!(store.doctor().unwrap_err().code, "index");
+            store.reindex().unwrap();
+            assert_eq!(
+                fs::read(store.directory().join(&note.path)).unwrap(),
+                source
+            );
+        }
+        let db = Database::open(&path).unwrap();
+        let tx = db.begin_write().unwrap();
+        tx.open_table(DATES)
+            .unwrap()
+            .insert(
+                "2026-01-01T00:00:00.000000000Z/00000000-0000-0000-0000-000000000001",
+                "00000000-0000-0000-0000-000000000001",
+            )
+            .unwrap();
+        tx.commit().unwrap();
+        drop(db);
+        assert_eq!(
+            store
+                .list_notes(Query {
+                    status: StatusFilter::All,
+                    ..Query::default()
+                })
+                .unwrap()
+                .total,
+            1
+        );
+        assert!(store.reindex().unwrap().healthy);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_source_directories_are_diagnosed_without_following_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        fs::rename(
+            store.directory().join("tags"),
+            store.directory().join("saved-tags"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.path(), store.directory().join("tags")).unwrap();
+        let health = store.doctor().unwrap();
+        assert!(!health.healthy);
+        assert!(
+            health
+                .diagnostics
+                .iter()
+                .any(|d| d.path == "tags" && d.code == "io")
+        );
+        assert!(
+            store
+                .list_tags(Scope::Public, None)
+                .unwrap()
+                .tags
+                .is_empty()
+        );
+    }
 }

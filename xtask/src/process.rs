@@ -219,6 +219,15 @@ mod tests {
     use serde_json::json;
     use std::cell::Cell;
 
+    pub(super) fn no_report() -> Result<()> {
+        Ok(())
+    }
+
+    pub(super) fn rejecting_viewer(path: &Path) -> Result<()> {
+        assert_eq!(fs::read_to_string(path)?, "fresh");
+        anyhow::bail!("viewer unavailable")
+    }
+
     #[test]
     fn probes_distinguish_missing_and_unusable_tools() {
         let root = tempfile::tempdir().unwrap();
@@ -287,14 +296,11 @@ mod tests {
                 generated.set(true);
                 Ok(())
             },
-            |path| {
-                assert!(generated.get());
-                assert_eq!(fs::read_to_string(path)?, "fresh");
-                anyhow::bail!("viewer unavailable")
-            },
+            rejecting_viewer,
         )
         .unwrap_err();
         assert!(error.to_string().contains("viewer unavailable"));
+        assert!(generated.get());
         assert!(report.is_file());
     }
 
@@ -312,12 +318,54 @@ mod tests {
                         fs::write(&report, "incomplete")?;
                         anyhow::bail!("generation failed");
                     }
-                    Ok(())
+                    no_report()
                 },
-                |_| panic!("must not open a stale or missing report"),
+                rejecting_viewer,
             );
-            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains(if partial {
+                "generation failed"
+            } else {
+                "no report exists"
+            }));
             assert!(!report.exists());
         }
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[test]
+    fn starting_errors_and_report_parent_failures_include_the_operation() {
+        let root = tempfile::tempdir().unwrap();
+        let failed = run(root.path(), &CommandSpec::new(root.path().join("missing"))).unwrap_err();
+        assert!(failed.to_string().contains("starting"));
+        fs::write(root.path().join("blocked"), "keep").unwrap();
+        let failed = fresh_report(
+            root.path(),
+            "blocked/report.html",
+            tests::no_report,
+            tests::rejecting_viewer,
+        )
+        .unwrap_err();
+        assert!(failed.to_string().contains("creating report directory"));
+        assert_eq!(
+            fs::read_to_string(root.path().join("blocked")).unwrap(),
+            "keep"
+        );
+        assert!(
+            require(
+                root.path(),
+                "directory",
+                &CommandSpec::new(root.path()),
+                "Choose an executable."
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("could not be launched")
+        );
+        assert_eq!(concise_output(b"  stdout\nmessage ", b""), "stdout message");
+        assert_eq!(concise_output("x".repeat(500).as_bytes(), b"").len(), 400);
     }
 }

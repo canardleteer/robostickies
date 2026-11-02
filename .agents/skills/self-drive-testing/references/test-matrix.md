@@ -24,6 +24,7 @@ Exercise archive/restore, then delete the fixture sources.
 | `init_store` | Creates files in this checkout; adds missing outcome definitions in new/existing stores under current privacy defaults; repeat call preserves customized definitions; leaves root agent instructions alone by default |
 | `create_tag`, `get_tag`, `list_tags` | Short topics; full bodies; startup flag; case-insensitive topic/name search; public/private definitions with the same bare name |
 | `get_config` | Effective defaults and source paths match the files used by this process |
+| Store versions | `get_context`, `get_config`, and `validate_store` agree on `data_version` and `upgrade_available`; public context exposes only shared version status; `upgrade_store` previews without source writes and repeated upgrades are idempotent |
 | `create_note`, `get_note` | Untagged and multiple tags; required UUID; returned path matches disk; private tags route locally; explicit public conflict is rejected |
 | `update_note` | Revision is required; missing/null/blank/stale guards reject without source writes; omitted patch fields stay intact; empty tag list clears tags; current revision succeeds; archive/restore affects queries |
 | `list_notes` | Literal case-insensitive body search; AND tags; exclusions; all scopes/statuses; newest-first order; date boundaries; pagination without duplicates |
@@ -49,7 +50,8 @@ processes bound to temporary directories; inspect actual responses and files.
 | Area | Cases and expected behavior |
 | --- | --- |
 | Configuration | Isolated user file; shared/user/private precedence; privacy patterns; explicit tag visibility override; malformed configuration |
-| Sources | Manual edits/deletions refresh results; nested metadata/comments survive CRLF edits; cross-namespace duplicate IDs preserve public selection while local diagnostics and ambiguous ID operations report conflicts; legacy warm indexes refresh automatically |
+| Upgrades | New stores use the current version; missing version means legacy; legacy operations continue with CLI notices on stderr; explicit dry run and upgrade preserve both namespaces and customized guidance byte for byte except the shared version field; reject malformed/future versions and user/private overrides; exercise failed writes, cache states, and concurrent upgrades/writers |
+| Sources | Manual edits/deletions refresh results; nested metadata/comments, spacing, and CRLF framing survive edits and lifecycle changes; replacement bodies follow the source newline style; cross-namespace duplicate IDs preserve public selection while local diagnostics and ambiguous ID operations report conflicts; legacy warm indexes refresh automatically |
 | Privacy | Malformed private sources and misplaced private-tagged notes do not enter public output; malformed public sources prevent an incomplete review |
 | Cache | A running MCP server rebuilds missing/corrupt/incompatible indexes from Markdown; failed cache is disposable; cache failure after a save returns its ID with warnings; edits also remain successful |
 | Concurrency | Two MCP servers plus CLI writers retain independent creations; same-revision edits have exactly one winner; status/privacy races preserve the winner's fields; competing tag creation does not overwrite; contention returns busy; process exit releases the lock |

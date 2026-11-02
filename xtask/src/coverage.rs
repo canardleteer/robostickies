@@ -65,6 +65,11 @@ fn commands(engine: CoverageEngine, features: &FeatureArgs) -> Vec<CommandSpec> 
                 .args(["llvm-cov", "clean", "--workspace"])
                 .env("CARGO_LLVM_COV_SETUP", "no"),
             command
+                .args([
+                    "--no-default-ignore-filename-regex",
+                    "--ignore-filename-regex",
+                    policy::COVERAGE_IGNORES,
+                ])
                 .args(["--html", "--output-dir", "target/coverage/llvm-cov"])
                 .env("CARGO_LLVM_COV_SETUP", "no"),
         ],

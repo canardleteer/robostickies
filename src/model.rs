@@ -380,8 +380,17 @@ pub struct Review {
 /// Complete validation result. Validation does not change source files.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Health {
+    pub data_version: crate::version::DataVersion,
+    pub upgrade_available: bool,
     pub healthy: bool,
     pub notes: usize,
     pub tags: usize,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Options for an explicit store migration; dry runs never change source files.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpgradeOptions {
+    pub dry_run: bool,
 }

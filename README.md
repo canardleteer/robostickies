@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/robostickies-desk.png" alt="A robot holding a sticky note at a warmly lit desk covered with notes, beside a code editor and a sleeping cat." width="100%">
+</p>
+
 # robostickies
 
 Enables taking brief repository notes for humans and agents, during development
@@ -64,6 +68,8 @@ to use it without adding tracked integration files.
   repository context and tag guidance.
 - [Diagnostics and cache recovery](docs/usage/maintenance.md) validate note
   sources and Git privacy protections, and rebuild the disposable index.
+- [Store versions and upgrades](docs/usage/upgrades.md) report legacy formats
+  and migrate the shared configuration explicitly while preserving Markdown.
 - [Development tasks](docs/usage/development.md) provide workspace checks,
   coverage reports, and profiling against synthetic notes.
 

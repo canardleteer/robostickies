@@ -22,6 +22,10 @@ member; `.cargo/config.toml` maps `cargo xtask` to
   `target/coverage/llvm-cov/html/index.html` and
   `target/coverage/tarpaulin/tarpaulin-report.html`. Both `coverage --open` and
   `coverage-open` generate a fresh report before opening it.
+- LLVM reports include the application, xtask, and profiling example. Override
+  the engine's default filename exclusions so examples remain visible; omit
+  test directories, dependencies, and build artifacts. The profiling example
+  participates in tests through its Cargo target configuration.
 - `profile` builds the `robostickies` example `profile_notes` with the
   release-derived `profiling` profile and selects its executable from Cargo
   JSON messages using the exact package, name, and target kind. It seeds 256

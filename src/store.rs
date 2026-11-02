@@ -21,6 +21,7 @@ use crate::{
     document,
     index::Index,
     model::*,
+    version::{self, DataVersion, UpgradeResult},
 };
 
 /// Brief instructions supplied at MCP discovery, including before initialization.
@@ -134,6 +135,8 @@ pub struct Store {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct Context {
     pub initialized: bool,
+    pub data_version: Option<DataVersion>,
+    pub upgrade_available: bool,
     /// Canonical root selected when the handle was constructed. Omitted in public context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repository_root: Option<String>,
@@ -211,36 +214,21 @@ impl Store {
         Ok(self.repo.join(relative))
     }
 
-    fn initialized(&self) -> bool {
+    pub(crate) fn initialized(&self) -> bool {
         self.directory().join("config.toml").is_file()
     }
 
     fn lock(&self, initializing: bool) -> Result<Guard> {
+        self.lock_for_scope(initializing, Scope::All)
+    }
+
+    fn lock_for_scope(&self, initializing: bool, scope: Scope) -> Result<Guard> {
         let config = self.checked("config.toml")?;
-        if !initializing {
-            let text = fs::read_to_string(&config).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    Error::new(
-                        "not_initialized",
-                        "Run robostickies init or call init_store first",
-                    )
-                } else {
-                    e.into()
-                }
-            })?;
-            let value: toml::Value = toml::from_str(&text).map_err(|e| {
-                Error::new("configuration", format!("Invalid store config.toml: {e}"))
-            })?;
-            if value
-                .get("format_version")
-                .and_then(toml::Value::as_integer)
-                != Some(1)
-            {
-                return Err(Error::new(
-                    "configuration",
-                    "Store config.toml must contain format_version = 1",
-                ));
-            }
+        if !initializing && !config.try_exists()? {
+            return Err(Error::new(
+                "not_initialized",
+                "Run robostickies init or call init_store first",
+            ));
         }
         let cache = self.checked("cache")?;
         fs::create_dir_all(&cache)?;
@@ -254,7 +242,12 @@ impl Store {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(Guard { _file: file }),
+                Ok(()) => {
+                    let guard = Guard { _file: file };
+                    // Validate while holding the same lock used by upgrades and writers.
+                    self.configuration_for_scope_unlocked(scope)?;
+                    return Ok(guard);
+                }
                 Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(25))
                 }
@@ -435,7 +428,8 @@ impl Store {
     pub fn init(&self, options: InitOptions) -> Result<InitResult> {
         self.checked("config.toml")?;
         fs::create_dir_all(self.directory())?;
-        // Install exclusions before creating caches or private files.
+        let _guard = self.lock(true)?;
+        // Install exclusions before creating private files or populating the index.
         match options.ignore_location {
             IgnoreLocation::Store => {
                 let path = self.checked(".gitignore")?;
@@ -493,19 +487,16 @@ impl Store {
                 write_block(&path, &name, &rules)?;
             }
         }
-        let _guard = self.lock(true)?;
         let mut result = InitResult {
             created: vec![],
             agents_updated: false,
             warnings: vec![],
         };
-        for (relative, body) in [
-            (
-                "config.toml",
-                "format_version = 1\n\n[tags]\ndefault_private = false\nprivate_patterns = []\n",
-            ),
-            ("README.md", GUIDE),
-        ] {
+        let new_config = format!(
+            "format_version = 1\ndata_version = \"{}\"\n\n[tags]\ndefault_private = false\nprivate_patterns = []\n",
+            version::CURRENT
+        );
+        for (relative, body) in [("config.toml", new_config.as_str()), ("README.md", GUIDE)] {
             let path = self.checked(relative)?;
             if !path.exists() {
                 document::atomic_write(&path, body, false)?;
@@ -568,10 +559,56 @@ impl Store {
         config::load(&self.directory(), self.user_config.as_deref())
     }
 
+    fn configuration_for_scope_unlocked(&self, scope: Scope) -> Result<Configuration> {
+        if scope == Scope::Public {
+            config::load_shared(&self.directory())
+        } else {
+            self.configuration_unlocked()
+        }
+    }
+
     /// Inspect effective defaults and the configuration files that supplied them.
     pub fn configuration(&self) -> Result<Configuration> {
+        self.configuration_for_scope(Scope::All)
+    }
+
+    pub(crate) fn configuration_for_scope(&self, scope: Scope) -> Result<Configuration> {
         self.checked("config.toml")?;
-        self.configuration_unlocked()
+        let _guard = if self.initialized() {
+            Some(self.lock_for_scope(false, scope)?)
+        } else {
+            None
+        };
+        self.configuration_for_scope_unlocked(scope)
+    }
+
+    /// Upgrade both namespaces by migrating the shared configuration atomically.
+    /// A dry run validates the same inputs without writing sources. Existing
+    /// initialization never upgrades a store; repeated upgrades are idempotent.
+    /// Notes, tags, guidance, and cache files are not migrated by this step.
+    ///
+    /// # Errors
+    /// Returns `not_initialized` for an absent store, `configuration` for invalid
+    /// or unsupported versions or forbidden overrides, and lock or I/O failures.
+    /// Atomic replacement prevents partially written configuration files.
+    pub fn upgrade(&self, dry_run: bool) -> Result<UpgradeResult> {
+        let _guard = self.lock(false)?;
+        let source_version = self.configuration_unlocked()?.data_version;
+        let wrote = source_version.upgrade_available() && !dry_run;
+        if source_version.upgrade_available() {
+            let path = self.checked("config.toml")?;
+            let original = fs::read_to_string(&path)?;
+            let migrated = version::migrate(&original, source_version)?;
+            if wrote {
+                document::atomic_write(&path, &migrated, true)?;
+            }
+        }
+        Ok(UpgradeResult {
+            source_version,
+            target_version: version::CURRENT,
+            wrote,
+            dry_run,
+        })
     }
 
     fn create_tag_unlocked(&self, input: CreateTag) -> Result<Tag> {
@@ -617,7 +654,7 @@ impl Store {
 
     /// Discover short tag topics, optionally matching a name or topic substring.
     pub fn list_tags(&self, scope: Scope, text: Option<&str>) -> Result<TagList> {
-        let _guard = self.lock(false)?;
+        let _guard = self.lock_for_scope(false, scope)?;
         let index = self.index(false)?;
         let tags = index
             .tags(scope, text)
@@ -731,11 +768,7 @@ impl Store {
                     "A note already exists at the private destination",
                 ));
             }
-            fs::create_dir_all(
-                target
-                    .parent()
-                    .ok_or_else(|| Error::new("io", "Missing note parent"))?,
-            )?;
+            fs::create_dir_all(self.checked("private/notes")?)?;
             // Move the old public content first: new private content is never written publicly.
             fs::rename(self.checked(old_path)?, &target)?;
         }
@@ -800,15 +833,15 @@ impl Store {
 
     /// Browse indexed notes. Sources are synchronized before every query.
     pub fn list_notes(&self, query: Query) -> Result<NotePage> {
-        let _guard = self.lock(false)?;
+        let _guard = self.lock_for_scope(false, query.scope.unwrap_or(Scope::All))?;
         self.index(false)?.query(&query).map_err(cache_error)
     }
 
     /// Build complete deterministic review material. Default visibility is public.
     /// Pagination is consumed internally; malformed selected sources prevent an incomplete report.
     pub fn review(&self, mut query: Query) -> Result<Review> {
-        let _guard = self.lock(false)?;
         let scope = query.scope.unwrap_or(Scope::Public);
+        let _guard = self.lock_for_scope(false, scope)?;
         query.scope = Some(scope);
         if query.cursor.is_some() {
             return Err(Error::new(
@@ -871,6 +904,8 @@ impl Store {
     pub fn context(&self, scope: Scope) -> Result<Context> {
         let mut context = Context {
             initialized: self.initialized(),
+            data_version: None,
+            upgrade_available: false,
             repository_root: (scope != Scope::Public)
                 .then(|| self.repo.to_string_lossy().into_owned()),
             guidance: GUIDE.into(),
@@ -883,7 +918,10 @@ impl Store {
         if !context.initialized {
             return Ok(context);
         }
-        let _guard = self.lock(false)?;
+        let _guard = self.lock_for_scope(false, scope)?;
+        let configuration = self.configuration_for_scope_unlocked(scope)?;
+        context.data_version = Some(configuration.data_version);
+        context.upgrade_available = configuration.upgrade_available;
         let index = self.index(false)?;
         let tags = index.tags(scope, None).map_err(cache_error)?;
         context.tags = tags.iter().map(TagSummary::from).collect();
@@ -894,7 +932,7 @@ impl Store {
             .filter(|d| scope.includes(d.visibility))
             .collect();
         if scope != Scope::Public {
-            context.configuration = Some(self.configuration_unlocked()?);
+            context.configuration = Some(configuration);
         }
         Ok(context)
     }
@@ -928,14 +966,7 @@ impl Store {
             .total;
         let tags = index.tags(Scope::All, None).map_err(cache_error)?.len();
         let mut diagnostics = index.diagnostics.clone();
-        if let Err(error) = self.configuration_unlocked() {
-            diagnostics.push(Diagnostic {
-                path: "config.toml".into(),
-                code: error.code,
-                message: error.message,
-                visibility: Visibility::Private,
-            });
-        }
+        let configuration = self.configuration_unlocked()?;
         if let Ok(output) = Command::new("git")
             .args([
                 "ls-files",
@@ -965,6 +996,8 @@ impl Store {
             }
         }
         Ok(Health {
+            data_version: configuration.data_version,
+            upgrade_available: configuration.upgrade_available,
             healthy: diagnostics.is_empty(),
             notes,
             tags,
@@ -1041,4 +1074,444 @@ fn write_block(path: &Path, name: &str, body: &str) -> Result<bool> {
     }
     document::atomic_write(path, &replacement, path.exists())?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_blocks_preserve_surrounding_text_and_reject_broken_markers() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("AGENTS.md");
+        for prefix in ["", "Team rules", "Team rules\n", "Team rules\n\n"] {
+            fs::write(&path, prefix).unwrap();
+            assert!(write_block(&path, "robostickies", "First\n").unwrap());
+            let first = fs::read_to_string(&path).unwrap();
+            assert!(first.starts_with(prefix));
+            assert!(!write_block(&path, "robostickies", "First\n").unwrap());
+            assert!(write_block(&path, "robostickies", "Second\n").unwrap());
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                first.replace("First", "Second")
+            );
+        }
+        for broken in [
+            "<!-- BEGIN robostickies -->\nmissing end",
+            "<!-- END robostickies -->\n",
+        ] {
+            fs::write(&path, broken).unwrap();
+            assert_eq!(
+                write_block(&path, "robostickies", "replacement\n")
+                    .unwrap_err()
+                    .code,
+                "configuration"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        }
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert_eq!(
+            write_block(&path, "robostickies", "body").unwrap_err().code,
+            "io"
+        );
+    }
+
+    #[test]
+    fn incomplete_files_and_non_git_local_exclusions_have_typed_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file");
+        fs::write(&file, "content").unwrap();
+        assert_eq!(
+            Store::with_user_config(&file, None).unwrap_err().code,
+            "invalid_input"
+        );
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        assert_eq!(
+            store
+                .init(InitOptions {
+                    agents: false,
+                    ignore_location: IgnoreLocation::Local
+                })
+                .unwrap_err()
+                .code,
+            "configuration"
+        );
+        store.init(InitOptions::default()).unwrap();
+        let missing = "00000000-0000-0000-0000-000000000001";
+        assert_eq!(store.get_note(missing).unwrap_err().code, "not_found");
+        fs::create_dir(store.directory().join(format!("notes/{missing}.md"))).unwrap();
+        assert_eq!(store.get_note(missing).unwrap_err().code, "io");
+        fs::create_dir(store.directory().join("tags/broken.md")).unwrap();
+        assert_eq!(store.get_tag("broken").unwrap_err().code, "io");
+        assert_eq!(
+            store
+                .create_tag(CreateTag {
+                    name: "empty".into(),
+                    topic: " ".into(),
+                    body: String::new(),
+                    read_on_start: false,
+                    private: None
+                })
+                .unwrap_err()
+                .code,
+            "invalid_input"
+        );
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[test]
+    fn operations_on_absent_stores_fail_without_creating_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        assert!(!store.configuration().unwrap().upgrade_available);
+        let create = CreateNote {
+            body: "Absent store fixture".into(),
+            tags: vec![],
+            private: Some(true),
+        };
+        let errors = [
+            store.create_note(create).unwrap_err(),
+            store.get_note("invalid").unwrap_err(),
+            store.update_note(UpdateNote::default()).unwrap_err(),
+            store
+                .publish_note(PublishNote {
+                    id: "invalid".into(),
+                    body: None,
+                    tags: None,
+                    dry_run: true,
+                    expected_revision: "revision".into(),
+                })
+                .unwrap_err(),
+            store.list_notes(Query::default()).unwrap_err(),
+            store.review(Query::default()).unwrap_err(),
+            store.get_tag("tools").unwrap_err(),
+            store.list_tags(Scope::All, None).unwrap_err(),
+            store
+                .create_tag(CreateTag {
+                    name: "tools".into(),
+                    topic: "Tools".into(),
+                    body: String::new(),
+                    read_on_start: false,
+                    private: None,
+                })
+                .unwrap_err(),
+            store.doctor().unwrap_err(),
+            store.reindex().unwrap_err(),
+            store.upgrade(false).unwrap_err(),
+        ];
+        assert!(errors.iter().all(|e| e.code == "not_initialized"));
+        assert!(!store.directory().exists());
+    }
+
+    #[test]
+    fn invalid_edits_publications_and_review_cursors_do_not_change_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        let tag = store
+            .create_tag(CreateTag {
+                name: "local".into(),
+                topic: "Local".into(),
+                body: "Guidance".into(),
+                read_on_start: false,
+                private: Some(true),
+            })
+            .unwrap();
+        let public = store
+            .create_note(CreateNote {
+                body: "Public fixture".into(),
+                tags: vec![],
+                private: Some(false),
+            })
+            .unwrap()
+            .note;
+        let local = store
+            .create_note(CreateNote {
+                body: "Local fixture".into(),
+                tags: vec![tag.name.clone()],
+                private: Some(true),
+            })
+            .unwrap()
+            .note;
+        for patch in [
+            UpdateNote {
+                body: Some(" ".into()),
+                ..UpdateNote::default()
+            },
+            UpdateNote {
+                tags: Some(vec![tag.name.clone()]),
+                private: Some(false),
+                ..UpdateNote::default()
+            },
+        ] {
+            assert!(
+                store
+                    .update_note(UpdateNote {
+                        id: public.id.clone(),
+                        expected_revision: public.revision.clone(),
+                        ..patch
+                    })
+                    .is_err()
+            );
+            assert_eq!(
+                store.get_note(&public.id).unwrap().revision,
+                public.revision
+            );
+        }
+        let request = |note: &Note, tags| PublishNote {
+            id: note.id.clone(),
+            body: None,
+            tags,
+            dry_run: false,
+            expected_revision: note.revision.clone(),
+        };
+        assert_eq!(
+            store.publish_note(request(&public, None)).unwrap_err().code,
+            "invalid_input"
+        );
+        assert_eq!(
+            store
+                .publish_note(request(&local, Some(vec![tag.name])))
+                .unwrap_err()
+                .code,
+            "privacy"
+        );
+        assert_eq!(
+            store
+                .review(Query {
+                    cursor: Some("anything".into()),
+                    ..Query::default()
+                })
+                .unwrap_err()
+                .code,
+            "invalid_input"
+        );
+        assert_eq!(store.list_notes(Query::default()).unwrap().total, 2);
+        assert_eq!(store.get_note(&local.id).unwrap().revision, local.revision);
+    }
+}
+
+#[cfg(test)]
+mod input_failure_tests {
+    use super::*;
+
+    #[test]
+    fn initialized_operations_reject_invalid_ids_tags_revisions_and_empty_publications() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        assert_eq!(
+            store
+                .create_note(CreateNote {
+                    body: " ".into(),
+                    tags: vec![],
+                    private: Some(true)
+                })
+                .unwrap_err()
+                .code,
+            "invalid_input"
+        );
+        assert_eq!(
+            store
+                .create_note(CreateNote {
+                    body: "Rejected tag fixture".into(),
+                    tags: vec!["undefined".into()],
+                    private: Some(true)
+                })
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        assert_eq!(
+            store
+                .create_tag(CreateTag {
+                    name: "Invalid".into(),
+                    topic: "Tools".into(),
+                    body: String::new(),
+                    read_on_start: false,
+                    private: None
+                })
+                .unwrap_err()
+                .code,
+            "invalid_input"
+        );
+        let note = store
+            .create_note(CreateNote {
+                body: "Guarded fixture".into(),
+                tags: vec![],
+                private: Some(true),
+            })
+            .unwrap()
+            .note;
+        let before = fs::read(store.directory().join(&note.path)).unwrap();
+        for (id, revision, code) in [
+            ("invalid", "revision", "invalid_input"),
+            (
+                "00000000-0000-0000-0000-000000000001",
+                "revision",
+                "not_found",
+            ),
+            (note.id.as_str(), " ", "invalid_input"),
+            (note.id.as_str(), "stale", "conflict"),
+        ] {
+            assert_eq!(
+                store
+                    .update_note(UpdateNote {
+                        id: id.into(),
+                        expected_revision: revision.into(),
+                        ..UpdateNote::default()
+                    })
+                    .unwrap_err()
+                    .code,
+                code
+            );
+            assert_eq!(
+                store
+                    .publish_note(PublishNote {
+                        id: id.into(),
+                        expected_revision: revision.into(),
+                        dry_run: true,
+                        body: None,
+                        tags: None
+                    })
+                    .unwrap_err()
+                    .code,
+                code
+            );
+        }
+        assert_eq!(
+            store
+                .update_note(UpdateNote {
+                    id: note.id.clone(),
+                    expected_revision: note.revision.clone(),
+                    tags: Some(vec!["undefined".into()]),
+                    ..UpdateNote::default()
+                })
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        for (body, tags, code) in [
+            (Some(" ".into()), None, "invalid_input"),
+            (None, Some(vec!["undefined".into()]), "not_found"),
+        ] {
+            assert_eq!(
+                store
+                    .publish_note(PublishNote {
+                        id: note.id.clone(),
+                        expected_revision: note.revision.clone(),
+                        dry_run: true,
+                        body,
+                        tags
+                    })
+                    .unwrap_err()
+                    .code,
+                code
+            );
+        }
+        assert_eq!(
+            store
+                .review(Query {
+                    until: Some("invalid".into()),
+                    ..Query::default()
+                })
+                .unwrap_err()
+                .code,
+            "invalid_input"
+        );
+        assert_eq!(
+            fs::read(store.directory().join(&note.path)).unwrap(),
+            before
+        );
+        let index = store.directory().join("cache/index.redb");
+        fs::remove_file(&index).unwrap();
+        fs::create_dir(&index).unwrap();
+        assert_eq!(store.list_tags(Scope::All, None).unwrap_err().code, "index");
+        assert_eq!(store.review(Query::default()).unwrap_err().code, "index");
+        assert_eq!(store.context(Scope::All).unwrap_err().code, "index");
+        assert_eq!(
+            fs::read(store.directory().join(&note.path)).unwrap(),
+            before
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod filesystem_failure_tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn failed_initialization_and_cache_hazards_preserve_existing_files() {
+        let readonly = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(readonly.path(), None).unwrap();
+        let permissions = fs::metadata(readonly.path()).unwrap().permissions();
+        fs::set_permissions(readonly.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let failed = store.init(InitOptions::default());
+        fs::set_permissions(readonly.path(), permissions).unwrap();
+        assert_eq!(failed.unwrap_err().code, "io");
+        assert!(!store.directory().exists());
+
+        fs::create_dir_all(store.directory().join(".gitignore")).unwrap();
+        assert_eq!(store.init(InitOptions::default()).unwrap_err().code, "io");
+        assert!(!store.directory().join("config.toml").exists());
+        fs::remove_dir(store.directory().join(".gitignore")).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        let agents = readonly.path().join("AGENTS.md");
+        let broken = "<!-- BEGIN robostickies -->\nKeep this incomplete block.\n";
+        fs::write(&agents, broken).unwrap();
+        assert_eq!(
+            store
+                .init(InitOptions {
+                    agents: true,
+                    ..InitOptions::default()
+                })
+                .unwrap_err()
+                .code,
+            "configuration"
+        );
+        assert_eq!(fs::read_to_string(&agents).unwrap(), broken);
+        let note = store
+            .create_note(CreateNote {
+                body: "Filesystem fixture".into(),
+                tags: vec![],
+                private: Some(true),
+            })
+            .unwrap()
+            .note;
+        let lock = store.directory().join("cache/store.lock");
+        let permissions = fs::metadata(&lock).unwrap().permissions();
+        fs::set_permissions(&lock, fs::Permissions::from_mode(0o444)).unwrap();
+        let failed = store.doctor();
+        fs::set_permissions(&lock, permissions).unwrap();
+        assert_eq!(failed.unwrap_err().code, "io");
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), "Outside fixture").unwrap();
+        symlink(
+            outside.path(),
+            store.directory().join("cache/index.failed.redb"),
+        )
+        .unwrap();
+        assert_eq!(store.list_notes(Query::default()).unwrap_err().code, "io");
+        assert_eq!(store.get_note(&note.id).unwrap().revision, note.revision);
+        assert_eq!(
+            fs::read_to_string(outside.path()).unwrap(),
+            "Outside fixture"
+        );
+
+        let linked = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(linked.path(), None).unwrap();
+        fs::create_dir(store.directory()).unwrap();
+        symlink(outside.path(), store.directory().join("config.toml")).unwrap();
+        assert_eq!(store.init(InitOptions::default()).unwrap_err().code, "io");
+        assert_eq!(
+            fs::read_to_string(outside.path()).unwrap(),
+            "Outside fixture"
+        );
+    }
 }

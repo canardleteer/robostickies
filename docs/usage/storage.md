@@ -41,4 +41,11 @@ Use the complete UUID as the filename and command identifier. New IDs use
 UUIDv7. Notes support `active` and `archived` status. Git retains the history of
 shared edits; the index is rebuilt from current files after edits or checkouts.
 
+Edits retain custom frontmatter metadata and comments. They preserve the
+file's LF or CRLF convention, including replacement body text.
+
+The shared configuration holds the repository's sole `data_version`. Markdown
+documents have no version field, and the disposable index uses a separate cache
+generation. See [store versions and upgrades](upgrades.md).
+
 [All usage guides](README.md).

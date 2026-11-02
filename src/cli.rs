@@ -146,8 +146,30 @@ enum Command {
     Doctor,
     /// Rebuild the disposable redb index from Markdown sources.
     Reindex,
+    /// Upgrade the shared store data version, preserving notes and guidance.
+    Upgrade {
+        /// Validate and preview the migration without changing source files.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Serve MCP over stdio; stdout is exclusively protocol data.
     Mcp,
+}
+
+impl Command {
+    fn read_scope(&self) -> Scope {
+        match self {
+            Self::Context { scope } => *scope,
+            Self::List { filters, .. } | Self::Search { filters, .. } => {
+                filters.review.scope.unwrap_or(Scope::All)
+            }
+            Self::Review { filters, .. } => filters.scope.unwrap_or(Scope::Public),
+            Self::Tags {
+                command: TagCommand::List { scope, .. },
+            } => *scope,
+            _ => Scope::All,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -290,8 +312,29 @@ pub async fn run(cli: Cli) -> Result<()> {
         discovered
     };
     let json = cli.json;
-    match cli.command {
+    let notice_version =
+        if !matches!(cli.command, Command::Mcp | Command::Upgrade { .. }) && store.initialized() {
+            let config = store.configuration_for_scope(cli.command.read_scope())?;
+            config.upgrade_available.then_some(config.data_version)
+        } else {
+            None
+        };
+    let result = match cli.command {
         Command::Mcp => crate::mcp::serve(store).await,
+        Command::Upgrade { dry_run } => emit(store.upgrade(dry_run)?, json, |result| {
+            format!(
+                "{} -> {}: {}",
+                result.source_version,
+                result.target_version,
+                if result.dry_run {
+                    "dry run; no sources changed"
+                } else if result.wrote {
+                    "upgraded"
+                } else {
+                    "already current"
+                }
+            )
+        }),
         Command::Init {
             agents,
             ignore_location,
@@ -532,7 +575,16 @@ pub async fn run(cli: Cli) -> Result<()> {
                 ))
             }
         }
+    };
+    if result.is_ok()
+        && let Some(version) = notice_version
+    {
+        eprintln!(
+            "Notice: Store data version {version} is supported; run robostickies upgrade to use {}.",
+            crate::version::CURRENT
+        );
     }
+    result
 }
 
 fn emit<T: Serialize>(value: T, json: bool, render: impl FnOnce(&T) -> String) -> Result<()> {
@@ -623,5 +675,28 @@ mod tests {
             ])
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn serialization_failure_is_reported_before_writing_stdout() {
+        struct Fails;
+        impl Serialize for Fails {
+            fn serialize<S: serde::Serializer>(
+                &self,
+                _: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("fixture encoding failure"))
+            }
+        }
+        fn render(_: &Fails) -> String {
+            "fixture rendered".into()
+        }
+        assert_eq!(emit(Fails, true, render).unwrap_err().code, "internal");
+        emit(Fails, false, render).unwrap();
     }
 }

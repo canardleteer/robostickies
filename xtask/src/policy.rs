@@ -9,6 +9,10 @@ pub(crate) const CHECK_ORDER: [CheckStep; 4] = [
     CheckStep::Test,
 ];
 pub(crate) const LLVM_COV_REPORT: &str = "target/coverage/llvm-cov/html/index.html";
+// Keep application, xtask, and example sources visible. cargo-llvm-cov's
+// default exclusions also hide examples, even when their tests execute.
+pub(crate) const COVERAGE_IGNORES: &str =
+    r"(^|[/\\])(tests|benches|target|\.cargo|\.rustup)([/\\]|$)|[/\\]rustc[/\\]";
 pub(crate) const TARPAULIN_REPORT: &str = "target/coverage/tarpaulin/tarpaulin-report.html";
 pub(crate) const PROFILE_REPORT: &str = "target/profile/profile.json";
 pub(crate) const PROFILE_PACKAGE: &str = "robostickies";

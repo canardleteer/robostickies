@@ -4,6 +4,9 @@ From this checkout, run `cargo xtask --help` to discover development commands.
 The `xtask` crate shares the root workspace and lockfile. Ordinary `cargo run`,
 `cargo build`, and `cargo install --path . --locked` still select robostickies.
 
+If a locked local install cannot reach the registry and the dependencies are
+cached, retry `cargo install --path . --locked --offline`.
+
 ## Checks
 
 ```sh
@@ -78,6 +81,8 @@ cargo xtask coverage-open
 engine. Coverage runs the workspace's tests across all targets and writes
 `target/coverage/llvm-cov/html/index.html`. The xtask disables automatic Rust
 component installation, so install the LLVM tools explicitly when needed.
+The report includes application, xtask, and profiling-example sources. Test
+directories, dependencies, and build artifacts are excluded.
 
 Run coverage locally as a merge request nears completion and inspect each
 production source file. Reports stay local; CI neither uploads coverage nor

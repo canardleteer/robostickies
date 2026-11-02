@@ -12,6 +12,7 @@ mod index;
 pub mod mcp;
 pub mod model;
 pub mod store;
+pub mod version;
 
 pub use model::{Error, Result};
 pub use store::Store;
