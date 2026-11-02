@@ -27,9 +27,11 @@ See [shared editing](shared-editing.md) for lock contention and
 ## Errors and exit statuses
 
 CLI errors use `invalid_input`, `invalid_document`, `not_found`, `not_initialized`,
-`conflict`, `privacy`, `configuration`, `busy`, `io`, `index`, or `internal` codes.
+`conflict`, `privacy`, `configuration`, `upgrade_required`, `busy`, `io`, `index`,
+or `internal` codes.
 Exit statuses are 2 for clap usage, 65 for invalid input/documents, 66 for missing
 notes/stores, 74 for I/O, 75 for lock contention, 78 for configuration, and 1 for
-other failures. Empty results succeed.
+other failures. Mandatory upgrades use `upgrade_required` with exit status 78.
+Empty results succeed.
 
 [All usage guides](README.md).
