@@ -8,6 +8,15 @@ The alias builds its launcher under `target/xtask`, letting workspace checks
 rebuild xtask on Windows without replacing a running executable. Task
 subprocesses still honor `CARGO_TARGET_DIR`.
 
+`rust-toolchain.toml` selects stable Rust with the minimal profile, Clippy, and
+rustfmt. The declared minimum remains Rust 1.90; LLVM tools are optional and
+installed separately for coverage. Verify the minimum with:
+
+```sh
+cargo +1.90.0 check --locked --workspace --all-targets --all-features
+cargo +1.90.0 test --locked --workspace --all-features
+```
+
 If a locked local install cannot reach the registry and the dependencies are
 cached, retry `cargo install --path . --locked --offline`.
 
@@ -37,6 +46,18 @@ workflow; the matrix continues after a failure. Supporting either additional
 platform requires explicit adoption. Check names remain
 `cargo xtask check (Linux)`, `cargo xtask check (macOS)`, and
 `cargo xtask check (Windows)`.
+
+The toolchain action runs before rust-cache, which restores dependencies and
+Cargo-installed binaries before cargo-machete installation or builds. Both
+`target/` and the separate `target/xtask` launcher directory are cached. Keys
+include the compiler and platform alongside manifest and lockfile hashes.
+Only pushes to this repository's `main` save caches; other jobs restore them.
+Packaged executable checks also use the root target directory.
+
+[Release automation](publishing.md) follows successful main-push checks. Its
+repository variable keeps it disabled until App and Trusted Publishing setup is
+complete. The release-plz executable is pinned independently of weekly Action
+updates; review its matching upstream documentation before upgrading.
 
 Ordinary merges require the Linux check after its first successful run.
 Administrators may push directly during pipeline bring-up. No pull request or

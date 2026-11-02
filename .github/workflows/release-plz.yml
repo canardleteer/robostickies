@@ -1,0 +1,175 @@
+name: Release-plz
+
+on:
+  workflow_run:
+    workflows: [Workspace checks]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checked-main:
+    name: Verify checked main commit
+    if: >-
+      vars.RELEASE_PLZ_ENABLED == 'true' &&
+      github.repository == 'canardleteer/robostickies' &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository) ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      sha: ${{ steps.checked.outputs.sha }}
+    steps:
+      - name: Require successful main-push checks for this SHA
+        id: checked
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CHECKED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        shell: bash
+        run: |
+          [[ "$CHECKED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh api --method GET --paginate --slurp \
+            "repos/$GH_REPO/actions/workflows/check.yml/runs" \
+            -f branch=main -f event=push -f status=success \
+            -f head_sha="$CHECKED_SHA" -F per_page=100 |
+            jq --exit-status --arg sha "$CHECKED_SHA" --arg repo "$GH_REPO" '
+              any(.[].workflow_runs[];
+                .head_sha == $sha and .head_branch == "main" and
+                .event == "push" and .conclusion == "success" and
+                .head_repository.full_name == $repo)
+            ' > /dev/null
+          echo "sha=$CHECKED_SHA" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Publish release
+    needs: checked-main
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    # Do not add concurrency here: GitHub replaces pending jobs, losing releases.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.checked-main.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: Restore Rust dependencies and installed tools
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: workspace-${{ runner.os }}-${{ runner.arch }}
+          workspaces: |
+            . -> target
+            . -> target/xtask
+          cache-bin: true
+          save-if: false
+      - name: Create repository installation token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          owner: canardleteer
+          repositories: robostickies
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+          skip-token-revoke: false
+      - name: Publish with built-in crates.io Trusted Publishing
+        uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
+        with:
+          command: release
+          version: 0.4.2
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  release-pr:
+    name: Prepare release PR
+    needs: [checked-main, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: release-plz-pr-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.checked-main.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: Restore Rust dependencies and installed tools
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: workspace-${{ runner.os }}-${{ runner.arch }}
+          workspaces: |
+            . -> target
+            . -> target/xtask
+          cache-bin: true
+          save-if: false
+      - name: Check main tip and manual release PR hold
+        id: update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CHECKED_SHA: ${{ needs.checked-main.outputs.sha }}
+        shell: bash
+        run: |
+          main_sha=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          if [[ "$CHECKED_SHA" != "$main_sha" ]]; then
+            echo 'Skipping PR generation: a newer main commit exists.'
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          held=$(gh api --method GET --paginate --slurp "repos/$GH_REPO/pulls" \
+            -f state=open -f base=main -F per_page=100 |
+            jq 'any(.[][];
+              (.head.ref | startswith("release-plz-")) and
+              any(.labels[]; .name == "release-plz-manual"))')
+          if [[ "$held" == true ]]; then
+            echo 'Skipping PR generation: an open release PR is held for manual edits.'
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'run=true' >> "$GITHUB_OUTPUT"
+      - name: Create repository installation token
+        if: steps.update.outputs.run == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          owner: canardleteer
+          repositories: robostickies
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+          skip-token-revoke: false
+      - name: Create or update release PR
+        if: steps.update.outputs.run == 'true'
+        uses: release-plz/action@f67a7e724bdad4a0f6875f186060a0ca2770d76c # v0.5.147
+        with:
+          command: release-pr
+          version: 0.4.2
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

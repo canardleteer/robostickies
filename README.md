@@ -74,6 +74,8 @@ to use it without adding tracked integration files.
   and migrate the shared configuration explicitly while preserving Markdown.
 - [Development tasks](docs/usage/development.md) provide workspace checks,
   unused-dependency checks, coverage reports, and profiling against synthetic notes.
+- [Release automation](docs/usage/publishing.md) uses release-plz for release PRs,
+  changelogs, and crates.io Trusted Publishing after repository setup.
 
 ## Development
 
@@ -93,6 +95,6 @@ required.
 
 Agent development and verification instructions are in [AGENTS.md](https://github.com/canardleteer/robostickies/blob/main/AGENTS.md).
 Integration test conventions are in [tests/AGENTS.md](https://github.com/canardleteer/robostickies/blob/main/tests/AGENTS.md).
-The temporary [publishing procedure](docs/usage/publishing.md) covers release candidates.
+The [publishing guide](docs/usage/publishing.md) covers release setup and validation.
 
 Licensed under the [MIT License](LICENSE).
