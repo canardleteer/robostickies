@@ -4,6 +4,10 @@ From this checkout, run `cargo xtask --help` to discover development commands.
 The `xtask` crate shares the root workspace and lockfile. Ordinary `cargo run`,
 `cargo build`, and `cargo install --path . --locked` still select robostickies.
 
+The alias builds its launcher under `target/xtask`, letting workspace checks
+rebuild xtask on Windows without replacing a running executable. Task
+subprocesses still honor `CARGO_TARGET_DIR`.
+
 If a locked local install cannot reach the registry and the dependencies are
 cached, retry `cargo install --path . --locked --offline`.
 

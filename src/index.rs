@@ -574,7 +574,7 @@ mod tests {
         )
         .unwrap();
         fs::create_dir(store.directory().join("tags/directory.md")).unwrap();
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         {
             use std::os::unix::ffi::OsStringExt;
             fs::write(

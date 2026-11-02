@@ -2,7 +2,10 @@
 
 Follow the [root instructions](../AGENTS.md). This crate is a root workspace
 member; `.cargo/config.toml` maps `cargo xtask` to
-`cargo run --package xtask --`. The root package remains the default member.
+`cargo run --package xtask --target-dir target/xtask --`. The separate launcher
+directory lets workspace checks rebuild xtask on Windows without replacing a
+running executable. Task subprocesses still honor `CARGO_TARGET_DIR`. The root
+package remains the default member.
 
 ## Command policy
 
