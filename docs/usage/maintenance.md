@@ -13,6 +13,9 @@ Context, configuration, and health reports include the shared `data_version`
 and derived `upgrade_available` status. See [store upgrades](upgrades.md) to
 preview and apply a migration.
 
+Git validation probes capture their output and receive closed input, keeping
+their I/O separate from the stdio MCP transport.
+
 A rebuild does not rewrite the authoritative Markdown files. If indexing fails
 after a successful save, the operation still returns the saved note's ID with
 warnings. Retain that ID and repair the cache before retrying discovery; repeating

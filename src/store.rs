@@ -989,8 +989,8 @@ impl Store {
                 let ignored = Command::new("git")
                     .args(["check-ignore", "-q", "--", path])
                     .current_dir(&self.repo)
-                    .status()?;
-                if !ignored.success() {
+                    .output()?;
+                if !ignored.status.success() {
                     diagnostics.push(Diagnostic { path: path.into(), code: "missing_ignore".into(), message: "Private/cache paths are not ignored; rerun init to install ignore rules".into(), visibility: Visibility::Private });
                 }
             }

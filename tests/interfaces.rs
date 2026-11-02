@@ -1903,6 +1903,59 @@ async fn cache_table_faults_and_missing_definitions_refresh_through_live_mcp() {
 }
 
 #[tokio::test]
+async fn mcp_git_probes_have_closed_input_and_captured_output() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        cli(temp.path(), &["init"]).await;
+        let tools = temp.path().join("tools with spaces");
+        fs::create_dir(&tools).unwrap();
+        let git = tools.join(format!("git{}", std::env::consts::EXE_SUFFIX));
+        let compiled = Command::new("rustc")
+            .args(["--edition=2024", "--crate-name", "git_probe_fixture"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/git.rs"))
+            .arg("-o")
+            .arg(git)
+            .bounded_output()
+            .await
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        let path = std::env::join_paths(std::iter::once(tools).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap();
+        let mut process = command(temp.path());
+        process
+            .arg("mcp")
+            .env("PATH", path)
+            .current_dir(temp.path());
+        let client = ().serve(TokioChildProcess::new(process).unwrap()).await.unwrap();
+        let report = tokio::time::timeout(
+            support::PROCESS_TIMEOUT,
+            client.call_tool(
+                CallToolRequestParams::new("validate_store")
+                    .with_arguments(json!({}).as_object().unwrap().clone()),
+            ),
+        )
+        .await;
+        tokio::time::timeout(Duration::from_secs(2), client.cancel())
+            .await
+            .unwrap()
+            .unwrap();
+        let report = report
+            .expect("Git probe waited for protocol input")
+            .unwrap();
+        assert_ne!(report.is_error, Some(true));
+        assert_eq!(report.structured_content.unwrap()["healthy"], true);
+    })
+    .await
+    .expect("MCP Git probe test timed out");
+}
+
+#[tokio::test]
 async fn doctor_identifies_missing_private_exclusion_while_cache_remains_ignored() {
     tokio::time::timeout(Duration::from_secs(60), async {
         let temp = tempfile::tempdir().unwrap();
