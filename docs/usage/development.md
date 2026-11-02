@@ -63,7 +63,8 @@ cargo xtask check --only=check --no-default-features
 ```
 
 Feature options never go to rustfmt. Only tools needed by the selected checks
-are probed. Missing Rust components can be installed with:
+are probed. Subprocesses search the caller's `PATH` before platform fallback
+locations. Missing Rust components can be installed with:
 
 ```sh
 rustup component add rustfmt

@@ -45,6 +45,9 @@ impl CommandSpec {
 
     fn command(&self, root: &Path) -> Command {
         let mut command = Command::new(&self.program);
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
         command
             .args(&self.args)
             .envs(self.env.iter().cloned())

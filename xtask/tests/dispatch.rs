@@ -146,6 +146,7 @@ async fn checks_dispatch_in_order_forward_features_and_stop_after_failures() {
         let output = f.command(&["check"]).env("CARGO", f.root.path().join("missing")).bounded_output().await.unwrap();
         assert!(String::from_utf8_lossy(&output.stderr).contains("not installed or not on PATH"));
         successful(&f.command(&["check", "--only=check"]).env_remove("CARGO").bounded_output().await.unwrap());
+        successful(&f.command(&["check", "--only=check"]).env_remove("PATH").bounded_output().await.unwrap());
         let mut main = Command::new(env!("CARGO_BIN_EXE_xtask"));
         f.environment(&mut main);
         successful(&main.args(["check", "--only=fmt"]).bounded_output().await.unwrap());
