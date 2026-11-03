@@ -478,6 +478,7 @@ impl Store {
 
     /// Scaffold a store. Existing source files are preserved; agent integration is opt-in.
     /// Returns configuration, filesystem, or lock failures without altering Git's index.
+    /// Rejects symlinked paths and nonregular managed files before reading their contents.
     pub fn init(&self, options: InitOptions) -> Result<InitResult> {
         self.checked("config.toml")?;
         fs::create_dir_all(self.directory())?;
@@ -490,12 +491,7 @@ impl Store {
             }
             IgnoreLocation::Local => {
                 let output = Command::new("git")
-                    .args([
-                        "rev-parse",
-                        "--path-format=absolute",
-                        "--git-path",
-                        "info/exclude",
-                    ])
+                    .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
                     .current_dir(&self.repo)
                     .output()?;
                 if !output.status.success() {
@@ -504,10 +500,11 @@ impl Store {
                         "Local excludes require a Git repository; initialize Git or use --ignore-location store",
                     ));
                 }
-                let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim_end());
-                if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
-                    return Err(Error::new("io", "Refusing a symlinked Git exclude file"));
-                }
+                let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim_end());
+                // --git-path with absolute formatting canonicalizes the final entry,
+                // hiding symlinks before validation. Inspect the original components.
+                document::safe_path(&common, Path::new("info/exclude"))?;
+                let path = common.join("info/exclude");
                 let prefix = Command::new("git")
                     .args(["rev-parse", "--show-prefix"])
                     .current_dir(&self.repo)
@@ -1213,6 +1210,20 @@ fn check_revision(note: &Note, expected: &str) -> Result<()> {
 }
 
 fn write_block(path: &Path, name: &str, body: &str) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(Error::new(
+                "io",
+                format!(
+                    "Managed text path must be a regular file: {}",
+                    path.display()
+                ),
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     let original = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),

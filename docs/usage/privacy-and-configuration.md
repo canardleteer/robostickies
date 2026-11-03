@@ -29,19 +29,27 @@ By default, `.robostickies/.gitignore` excludes `private/` and `cache/`. To use
 local Git rules instead, initialize with `--ignore-location local`; rules go in
 Git's `info/exclude`, including in linked worktrees. Git ignore rules do not
 remove existing tracked files. `doctor` identifies tracking and exclusion issues.
+Initialization rejects symlinked local exclusion paths, including their parent
+directory. Managed text files must be regular files; pipes and other special
+entries are rejected before reading.
 
 ## Keep the entire store local
 
-To keep an untracked store out of Git, run from the repository root:
+To keep an untracked store out of Git, find its Git common directory:
 
 ```sh
-printf '%s\n' '/.robostickies/' >> "$(git rev-parse --git-path info/exclude)"
+git rev-parse --path-format=absolute --git-common-dir
+```
+
+Edit `info/exclude` under that directory and add `/.robostickies/` on its own line.
+Use a regular file and directory, preserving existing rules. Then initialize:
+
+```sh
 robostickies init --ignore-location local
 ```
 
-The first command adds a whole-store rule to Git's local exclude file, without
-changing tracked ignore files. The CLI flag alone excludes only `private/` and
-`cache/`. To share the whole-store exclusion with other clones, put the same
+The whole-store rule stays local. The CLI flag alone excludes only `private/`
+and `cache/`. To share the whole-store exclusion with other clones, put the same
 `/.robostickies/` pattern in the root `.gitignore` instead.
 
 Leave `--agents` off. Keep MCP configuration outside the repository: use

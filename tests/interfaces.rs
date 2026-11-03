@@ -2463,3 +2463,73 @@ async fn fifo_preferences_warn_without_blocking_and_config_sources_are_rejected(
     .await
     .expect("FIFO configuration checks timed out");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn initialization_rejects_fifo_managed_files_without_blocking_cli_or_mcp() {
+    use std::os::unix::fs::FileTypeExt;
+
+    tokio::time::timeout(Duration::from_secs(30), async {
+        for (relative, location, agents) in [
+            (".git/info/exclude", "local", false),
+            (".robostickies/.gitignore", "store", false),
+            ("AGENTS.md", "store", true),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let initialized = Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(temp.path())
+                .bounded_output()
+                .await
+                .unwrap();
+            assert!(initialized.status.success());
+            let fifo = temp.path().join(relative);
+            fs::create_dir_all(fifo.parent().unwrap()).unwrap();
+            if fifo.exists() {
+                fs::remove_file(&fifo).unwrap();
+            }
+            let created = Command::new("mkfifo")
+                .arg(&fifo)
+                .bounded_output()
+                .await
+                .unwrap();
+            assert!(created.status.success());
+            let client = start_mcp(temp.path()).await;
+            let error = error_mcp(
+                &client,
+                "init_store",
+                json!({
+                    "ignore_location": location, "agents": agents
+                }),
+            )
+            .await;
+            assert_eq!(error["error"]["code"], "io");
+            let mut process = command(temp.path());
+            process.args(["init", "--ignore-location", location]);
+            if agents {
+                process.arg("--agents");
+            }
+            let output = process.bounded_output().await.unwrap();
+            assert_eq!(output.status.code(), Some(74));
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],
+                "io"
+            );
+            assert!(fs::symlink_metadata(&fifo).unwrap().file_type().is_fifo());
+            fs::remove_file(&fifo).unwrap();
+            call_mcp(
+                &client,
+                "init_store",
+                json!({"ignore_location":location,"agents":agents}),
+            )
+            .await;
+            assert_eq!(
+                call_mcp(&client, "validate_store", json!({})).await["healthy"],
+                true
+            );
+            client.cancel().await.unwrap();
+        }
+    })
+    .await
+    .expect("FIFO managed-file initialization checks timed out");
+}
