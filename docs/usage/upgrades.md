@@ -36,6 +36,10 @@ An already-current `v1alpha2` store needs no migration when the executable is
 updated. Initialization is the appropriate action for an absent store. Rebuild
 the cache when diagnostics or recovery require it, rather than after every install.
 
+Store migration and executable installation are separate operations. Running MCP
+processes retain their compiled build. Verify installed changes with a newly
+started server; restart an older server before using it for changed behavior.
+
 Both representations registered in this RC are safely usable. A future
 upgrade-only representation must declare its safety boundary and migration.
 Unsupported newer formats require compatible newer tooling: they are never

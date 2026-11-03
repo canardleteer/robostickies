@@ -80,9 +80,10 @@ Cooperating CLI/MCP clients sharing one OS account on local disk use an exclusiv
 operation lock. Source reads, revision comparisons, and saves share that lock;
 content replacement is atomic. Contention waits up to five seconds, then returns
 `busy`. The OS releases the lock when a process exits; keep the lock file in place.
-Concurrent direct editor/Git writes are outside this guarantee. After upgrading,
-start a new server for verification. Restart older servers before using them for
-behavior changed by the upgrade.
+Concurrent direct editor/Git writes are outside this guarantee. Store data
+migrations and executable installation are separate. Running MCP processes keep
+their compiled build. Use a newly started server to verify installed code, or
+restart an older server before relying on its changed behavior.
 
 Any private tag makes a note private. `add --private` also keeps an otherwise
 publicly tagged or untagged note local. Private notes stay private when tags
