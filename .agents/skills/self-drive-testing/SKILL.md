@@ -45,6 +45,11 @@ result before checking it. Identify the execution channel and keep failed or
 pending checks visible; child-process success does not verify the agent's
 installed connection.
 
+Collect independent tool responses before persisting them, and serialize evidence
+writes against the latest case state. Use file/stream writes or bounded chunks for
+large responses; embedding the growing JSON in one subprocess argument can exceed
+platform limits. Retain failed attempts and their adjudications when replaying.
+
 Exercise ordinary workflows through MCP. Use temporary stores for malformed
 sources, cache damage, filesystem hazards, configuration layers, and agent-file
 integration. Start reproducible child processes with `--no-user-config`, or pass
@@ -199,7 +204,7 @@ are separate from this portable flow:
 
 | Client | Fresh-connection recipe |
 | --- | --- |
-| Codex | [Separate CLI agent with child-only MCP configuration](references/codex.md) |
+| Codex | [Native subagent or separate CLI agent with child-only MCP settings](references/codex.md) |
 
 Other agents can add their own client reference and table entry. Every recipe
 must pass the same actual-connection identity, repository, behavior, preservation,

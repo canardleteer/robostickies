@@ -5,6 +5,8 @@
 - Direct agents to inspect startup upgrade advice independently of validation
   health, respect optional deferrals, and offer explicit migration choices.
 - Explain how to identify a running MCP build after installing a new executable.
+- Distinguish store migration from server replacement and document verified native
+  Codex subagent testing alongside the separate-process fallback.
 - Verify startup discovery through ordinary agent questions and snapshot MCP
   initialization instructions alongside tool/resource contracts.
 - Allow bounded pre-save contention in concurrency tests and improve source,

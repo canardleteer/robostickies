@@ -1,10 +1,10 @@
 # Codex: verify through a separate agent without restarting the parent
 
-Use a new Codex CLI process with its own stdio MCP server after installing the
-batch. This leaves the parent conversation running. Do not assume a native child
-task or fork restarted MCP: compare its actual runtime identity first. If the
-child exposes an older catalog or a mismatched build, use this explicit process
-recipe. Other clients can document equivalent launch methods alongside this one.
+Codex supports a native subagent route and an explicit CLI process route. Both
+leave the parent conversation running. A native child exposed the newly installed
+build during verification while the parent retained its older connection. Compare
+the child's actual runtime identity each time: spawning a task alone is not proof.
+Other clients can document equivalent launch methods alongside this reference.
 
 ## Prepare the checkpoint
 
@@ -24,12 +24,36 @@ orientation question. Keep the checkpoint, expected response fields, and this
 testing skill out of that agent's context until its first answer is recorded.
 The evaluator still checks its actual tool trace against the checkpoint.
 
+## Native Codex subagent
+
+The verified native route uses `collaboration.spawn_agent` with a fresh task
+context, `fork_turns: "none"`, and no model or MCP configuration override:
+
+```json
+{
+  "task_name": "self_drive",
+  "fork_turns": "none",
+  "message": "Read the self-drive-testing skill and private installation checkpoint. Call your actual MCP get_context and version tools; compare repository and all compiled fields before testing. Run the affected flow, look for papercuts, retain private evidence, clean up owned fixtures, and report."
+}
+```
+
+Pass the exact checkout, skill, and checkpoint paths in the task message. No
+special server arguments were needed for the verified connection. Keep the parent
+source edits paused until the subagent's entire turn finishes. Review its actual
+MCP responses and final preservation/cleanup evidence before applying outcomes.
+
+If that child has an older catalog or identity, leave changed-behavior checks
+pending and use the explicit CLI route below. Use that route for isolated
+repositories too: the native task API does not configure a different server root.
+A follow-up task on an older testing agent also needs the identity gate; start a
+new agent when its server is stale.
+
 ## Launch with child-only server settings
 
 The following recipe uses Codex CLI flags verified with `codex exec --help` on
 0.166.0. Replace the configuration literals and paths together; create the run
 directory and task file before starting. No global MCP configuration is rewritten.
-The model is inherited because no model override is supplied.
+No model override is supplied; the child uses its configured model.
 
 ```sh
 qa_repo=/path/to/checkout
