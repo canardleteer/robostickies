@@ -11,6 +11,8 @@
   initialization instructions alongside tool/resource contracts.
 - Allow bounded pre-save contention in concurrency tests and improve source,
   fixture-ownership, and prose/tool review procedures.
+- Refuse symlinked local Git exclusion paths before canonicalization can hide
+  them, and reject nonregular managed text files without blocking initialization.
 
 CLI/MCP descriptions and startup prose change compatibly. Existing inputs and
 response envelopes retain their shapes. Configuration and stored-data versions

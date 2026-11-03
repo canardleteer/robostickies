@@ -300,6 +300,69 @@ fn publishing_supports_preview_or_immediate_copy_and_discards_private_metadata()
 }
 
 #[test]
+fn private_tag_edits_move_public_notes_without_losing_hints_or_metadata() {
+    let (_temp, store) = fresh();
+    tag(&store, "local", true);
+    let public = store
+        .create_note(CreateNote {
+            body: "Reviewed public body\n".into(),
+            body_format: Some("custom/plain".into()),
+            tags: vec!["papercut".into()],
+            private: Some(false),
+        })
+        .unwrap()
+        .note;
+    let public_path = store.directory().join(&public.path);
+    let original = fs::read_to_string(&public_path).unwrap().replacen(
+        "---\n",
+        "---\n# Keep this comment.\ncustom:\n  values: [one, two]\n",
+        1,
+    );
+    fs::write(&public_path, &original).unwrap();
+    let public = store.get_note(&public.id).unwrap();
+    let mut edit = UpdateNote {
+        id: public.id.clone(),
+        expected_revision: public.revision.clone(),
+        body: Some("New private body\n".into()),
+        tags: Some(vec!["papercut".into(), "private:local".into()]),
+        private: Some(false),
+        ..Default::default()
+    };
+    assert_eq!(store.update_note(edit.clone()).unwrap_err().code, "privacy");
+    assert_eq!(fs::read_to_string(&public_path).unwrap(), original);
+    let private_path = store
+        .directory()
+        .join(format!("private/notes/{}.md", public.id));
+    assert!(!private_path.exists());
+
+    edit.private = None;
+    let moved = store.update_note(edit).unwrap().note;
+    assert_eq!(moved.id, public.id);
+    assert_eq!(moved.created_at, public.created_at);
+    assert_eq!(moved.visibility, Visibility::Private);
+    assert_eq!(moved.body, "New private body\n");
+    assert_eq!(moved.metadata, public.metadata);
+    assert!(!public_path.exists());
+    assert!(
+        fs::read_to_string(&private_path)
+            .unwrap()
+            .contains("# Keep this comment.")
+    );
+    assert_eq!(store.get_note(&moved.id).unwrap().revision, moved.revision);
+    assert_eq!(
+        store
+            .list_notes(Query {
+                scope: Some(Scope::Public),
+                ..Default::default()
+            })
+            .unwrap()
+            .total,
+        0
+    );
+    assert!(store.doctor().unwrap().healthy);
+}
+
+#[test]
 fn edits_preserve_frontmatter_comments_metadata_and_detect_stale_revisions() {
     let (_temp, store) = fresh();
     let source = note(&store, "Original body", &["papercut"]);
@@ -1294,6 +1357,45 @@ fn local_excludes_support_explicit_nested_roots_with_git_pattern_characters() {
         Visibility::Private
     );
     assert!(store.doctor().unwrap().healthy);
+}
+
+#[cfg(unix)]
+#[test]
+fn initialization_refuses_symlinked_local_excludes_without_changing_the_target() {
+    for parent_link in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        git(temp.path(), &["init", "-q"]);
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("exclude");
+        fs::write(&target, "# Unrelated exclusions\nkeep-me\n").unwrap();
+        let info = temp.path().join(".git/info");
+        let exclude = info.join("exclude");
+        let link = if parent_link {
+            fs::remove_dir_all(&info).unwrap();
+            std::os::unix::fs::symlink(outside.path(), &info).unwrap();
+            &info
+        } else {
+            fs::remove_file(&exclude).unwrap();
+            std::os::unix::fs::symlink(&target, &exclude).unwrap();
+            &exclude
+        };
+        let store = Store::with_user_config(temp.path(), None).unwrap();
+        let error = store
+            .init(InitOptions {
+                agents: false,
+                ignore_location: IgnoreLocation::Local,
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "io");
+        assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "# Unrelated exclusions\nkeep-me\n"
+        );
+        for path in ["config.toml", "README.md", "tags/papercut.md"] {
+            assert!(!store.directory().join(path).exists());
+        }
+    }
 }
 
 #[cfg(unix)]

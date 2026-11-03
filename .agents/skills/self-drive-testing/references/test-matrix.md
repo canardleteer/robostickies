@@ -63,6 +63,7 @@ processes bound to temporary directories; inspect actual responses and files.
 | Concurrency | Two MCP servers plus CLI writers retain independent creations; same-revision edits have exactly one winner; status/privacy races preserve the winner's fields; competing tag creation does not overwrite; contention returns busy; process exit releases the lock |
 | Repository | Nested startup CWD selects Git root; non-Git CWD works; explicit relative root overrides discovery; selection stays fixed per process |
 | Integration | Optional agent paragraph preserves existing content and is idempotent; store/local ignore modes work, including linked worktrees |
+| Initialization files | Reject symlinked Git exclusion files/parents and nonregular managed files before reading targets; repair and retry through the same process; regular local exclusions work for nested roots and linked worktrees |
 | Filesystem | Invalid paths and symlinks cannot escape; missing private/cache exclusions prevent unsafe writes; tracked private/cache paths are reported |
 
 Existing tests in `tests/store.rs` and `tests/interfaces.rs` cover these boundaries.
