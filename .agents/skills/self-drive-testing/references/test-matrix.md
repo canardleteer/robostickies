@@ -20,17 +20,21 @@ Exercise archive/restore, then delete the fixture sources.
 
 | Surface | Cases and expected behavior |
 | --- | --- |
+| Startup discovery | An ordinary fresh-agent orientation question surfaces applicable maintenance advice using only product-provided instructions; keep the expected fields out of its task. Test current, legacy, and deferred states separately before targeted checks |
+| `version` | Actual running process matches all seven checkpoint fields, including before init; empty arguments accepted, unknown arguments rejected, no repository reads or store creation |
 | `get_context` | Works before init; local all/private scopes include the canonical repository root; returns short topics and full startup bodies after init; public scope omits the root field, private tags, and personal config |
 | `init_store` | Creates files in this checkout; adds missing outcome definitions in new/existing stores under current privacy defaults; repeat call preserves customized definitions; leaves root agent instructions alone by default |
 | `create_tag`, `get_tag`, `list_tags` | Short topics; full bodies; startup flag; case-insensitive topic/name search; public/private definitions with the same bare name |
 | `get_config` | Effective defaults and source paths match the files used by this process |
 | Store versions | `get_context`, `get_config`, and `validate_store` agree on `data_version` and `upgrade_available`; public context exposes only shared version status; `upgrade_store` previews without source writes and repeated upgrades are idempotent |
 | `create_note`, `get_note` | Untagged and multiple tags; required UUID; returned path matches disk; private tags route locally; explicit public conflict is rejected |
+| Body hints | Recommended and arbitrary nonblank values; set/omit/clear; reject blank/conflicting/stale edits; preserve comments, nested metadata and newline style; legacy non-string hints survive unrelated edits and reject replacement/clear |
 | `update_note` | Revision is required; missing/null/blank/stale guards reject without source writes; omitted patch fields stay intact; empty tag list clears tags; current revision succeeds; archive/restore affects queries |
 | `list_notes` | Literal case-insensitive body search; AND tags; exclusions; all scopes/statuses; newest-first order; date boundaries; pagination without duplicates |
 | `review_notes` | Public/active by default; schema omits paging; rejects limit/cursor; filters work across multiple internal pages; deterministic Markdown; private content/counts/diagnostics are absent |
 | Outcome lifecycle | Retain papercut/paperclip and visibility; resolved requires affected-environment verification; adopted requires reviewed scoped guidance and a recorded destination; edits and archive/read retain outcome tags; archived-tag queries find history |
 | `publish_note` | Source revision is required for preview and copy; stale guards create no copy; dry run writes no source; actual copy has a new ID; original remains; private tags and extra metadata disappear |
+| Public body hint | Source hint disappears with private metadata; only an explicitly supplied public hint reaches the new copy; preview has no source file |
 | `validate_store`, `rebuild_index` | Healthy sources produce a healthy report; rebuild leaves Markdown unchanged |
 | Resources | Read `robostickies://context`, `robostickies://guidance`, `robostickies://tags`, `robostickies://config` as JSON before and after init; compare with corresponding tools |
 | Invalid calls | Unknown arguments; invalid IDs/tag names; empty bodies; unknown tags; invalid limits/dates/cursors; useful errors without unintended writes |
@@ -51,6 +55,8 @@ processes bound to temporary directories; inspect actual responses and files.
 | --- | --- |
 | Configuration | Isolated user file; shared/user/private precedence; privacy patterns; explicit tag visibility override; malformed configuration |
 | Upgrades | New stores use the current version; missing version means legacy; legacy operations continue with CLI notices on stderr; explicit dry run and upgrade preserve both namespaces and customized guidance byte for byte except the shared version field; reject malformed/future versions and user/private overrides; exercise failed writes, cache states, and concurrent upgrades/writers |
+| Advice and deferral | Healthy/empty diagnostics can coexist with SHOULD/MAY advice; current/no-store states do not recommend migration; optional target deferral changes no source version, never weakens mandatory safety, and leaves public responses independent; changed targets and malformed preferences restore recommendations |
+| Recovery snapshots | Hidden/private inclusion, cache/prior-snapshot exclusions, unsafe-entry/copy/integrity failures, retained failure copies, requested retention/default deletion/cleanup warnings; no snapshots for previews, current stores, or deferrals; ordered source validation is independent of disposable cache |
 | Sources | Manual edits/deletions refresh results; nested metadata/comments, spacing, and CRLF framing survive edits and lifecycle changes; replacement bodies follow the source newline style; cross-namespace duplicate IDs preserve public selection while local diagnostics and ambiguous ID operations report conflicts; legacy warm indexes refresh automatically |
 | Privacy | Malformed private sources and misplaced private-tagged notes do not enter public output; malformed public sources prevent an incomplete review |
 | Cache | A running MCP server rebuilds missing/corrupt/incompatible indexes from Markdown; failed cache is disposable; cache failure after a save returns its ID with warnings; edits also remain successful |

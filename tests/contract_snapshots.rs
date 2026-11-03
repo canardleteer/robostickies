@@ -31,6 +31,7 @@ async fn cli_help_contract() {
             vec!["tags", "create"],
             vec!["publish"],
             vec!["upgrade"],
+            vec!["mcp"],
         ] {
             let output = command(temp.path())
                 .args(&args)
@@ -75,6 +76,7 @@ async fn mcp_discovery_contract() {
         let mut process = command(temp.path());
         process.arg("mcp");
         let client = ().serve(TokioChildProcess::new(process).unwrap()).await.unwrap();
+        let instructions = client.peer_info().unwrap().instructions.clone();
         let mut tools = client.list_all_tools().await.unwrap();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         let mut resources = client.list_all_resources().await.unwrap();
@@ -83,7 +85,7 @@ async fn mcp_discovery_contract() {
         // Full actual schemas and annotations, rather than a hand-maintained facsimile.
         insta::assert_json_snapshot!(
             "mcp_discovery",
-            json!({"tools": tools, "resources": resources})
+            json!({"instructions": instructions, "tools": tools, "resources": resources})
         );
     })
     .await

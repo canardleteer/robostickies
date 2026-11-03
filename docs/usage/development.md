@@ -17,6 +17,12 @@ cargo +1.90.0 check --locked --workspace --all-targets --all-features
 cargo +1.90.0 test --locked --workspace --all-features
 ```
 
+Run workspace checks, MSRV verification, and instrumented coverage sequentially
+on a shared checkout. Running them together can exhaust the bounded operation-lock
+wait even when each suite passes alone. Mixed writer tests retry only confirmed
+pre-save `busy` failures, with a fixed limit; successful saves with cache warnings
+must never be retried as failed writes.
+
 If a locked local install cannot reach the registry and the dependencies are
 cached, retry `cargo install --path . --locked --offline`.
 
@@ -97,6 +103,26 @@ rustup component add rustfmt
 rustup component add clippy
 cargo install --locked cargo-machete --version 0.9.2
 ```
+
+## Review tools
+
+Workflow linting is separate from provider-agnostic xtasks. If `actionlint` cannot
+start a sandboxed tool launcher, select a native ShellCheck executable explicitly:
+
+```sh
+actionlint -shellcheck /path/to/native/shellcheck
+```
+
+A launcher failure leaves script linting unverified; it is not a workflow
+diagnostic. Verify the chosen binary's version and rerun the same workflow files.
+Use the execution policy's approved route when a native binary is unavailable.
+
+For prose review, read the complete Markdown source and inspect code examples
+separately. Some checker versions count YAML delimiters inside fenced examples as
+prose section dividers. Confirm such findings with a prose-only input that excludes
+fenced code and document frontmatter, while retaining the full-file report. Keep
+valid example delimiters; do not rewrite code to improve a prose score. Retain
+intentional field lists and literal commands when they carry necessary information.
 
 ## Coverage
 

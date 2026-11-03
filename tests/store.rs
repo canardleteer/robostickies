@@ -849,16 +849,42 @@ fn concurrent_writers_keep_every_note_and_do_not_hold_the_index_open() {
             let barrier = barrier.clone();
             thread::spawn(move || {
                 barrier.wait();
+                let mut ids = Vec::new();
                 for i in 0..3 {
-                    note(&store, &format!("Worker {worker} note {i}"), &["papercut"]);
+                    let mut busy_retries = 0;
+                    loop {
+                        let result = store.create_note(CreateNote {
+                            body_format: None,
+                            body: format!("Worker {worker} note {i}"),
+                            tags: vec!["papercut".into()],
+                            private: Some(true),
+                        });
+                        match result {
+                            Err(error) if error.code == "busy" && busy_retries < 2 => {
+                                // busy precedes saving; successful cache warnings must not retry.
+                                busy_retries += 1;
+                            }
+                            result => {
+                                ids.push(result.unwrap().note.id);
+                                break;
+                            }
+                        }
+                    }
                 }
+                ids
             })
         })
         .collect();
-    for worker in workers {
-        worker.join().unwrap();
-    }
-    assert_eq!(store.list_notes(Query::default()).unwrap().total, 12);
+    let expected: std::collections::BTreeSet<_> = workers
+        .into_iter()
+        .flat_map(|worker| worker.join().unwrap())
+        .collect();
+    assert_eq!(expected.len(), 12);
+    let found = store.list_notes(Query::default()).unwrap();
+    assert_eq!(found.total, 12);
+    let actual: std::collections::BTreeSet<_> =
+        found.notes.into_iter().map(|note| note.id).collect();
+    assert_eq!(actual, expected);
     assert!(store.doctor().unwrap().healthy);
 }
 

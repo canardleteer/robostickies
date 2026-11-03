@@ -26,12 +26,47 @@ use crate::{
 };
 
 /// Brief instructions supplied at MCP discovery, including before initialization.
-pub const DISCOVERY_GUIDANCE: &str = "Call get_context at the start of work to read tag topics and startup guidance for this repository. Record concrete friction with papercut and useful successes with paperclip; other defined tags and general notes are welcome. Private tags use private:<name> and force ignored local storage. Public review includes only public notes; use publish_note to copy a private note into public storage. Read get_context for details and a portable AGENTS.md snippet. Use init_store if the repository is not initialized.";
+pub const DISCOVERY_GUIDANCE: &str = concat!(
+    "Call get_context at the start of work. Inspect upgrade.requirement and upgrade.message ",
+    "independently of healthy and diagnostics. Surface should recommendations unless ",
+    "upgrade.deferred is true; explain must requirements before ordinary work. Offer an ",
+    "explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. ",
+    "Use version to identify this running MCP build. A newer CLI on disk does not refresh ",
+    "an existing server; use a fresh server before verifying changed behavior. ",
+    "Read tag topics and full startup guidance. Record friction with papercut and useful ",
+    "successes with paperclip; other tags and general notes are welcome. Private tags use ",
+    "private:<name> and force ignored local storage. Public review includes only public ",
+    "notes; publish_note makes an explicit public copy. Read get_context for details and ",
+    "a portable AGENTS.md snippet. Use init_store if the repository is not initialized."
+);
 
 const GUIDE: &str = r#"# Robostickies
 
 At the start of work, read the tag catalog and the full guidance for tags marked
 `read_on_start`. Use `robostickies context` or the MCP `get_context` tool.
+
+Inspect the returned `upgrade.requirement`, `upgrade.message`, and `warnings`
+before deciding whether maintenance is needed. Healthy validation and empty
+diagnostics do not mean that the store data version is current:
+
+- `none`: no data migration is needed. A new executable alone does not require
+  migration or an index rebuild.
+- `should`: tell the user an optional upgrade is recommended, unless
+  `upgrade.deferred` is true. Offer a preview, explicit upgrade, or deferral;
+  respect a saved deferral instead of repeating the reminder.
+- `must`: explain the required migration before ordinary work. Status and
+  supported migration operations remain available.
+
+Use `upgrade_store` with `dry_run: true` to preview, without those options to
+apply, or with `defer: true` to decline the optional target. CLI equivalents are
+`upgrade --dry-run`, `upgrade`, and `upgrade --defer`. Do not migrate automatically.
+An uninitialized store needs initialization rather than an upgrade.
+
+For MCP, call `version` to identify the running server's compiled build. CLI
+`--version` identifies that CLI process, not an existing MCP server. After an
+installation, restart/reconnect older servers or use a fresh server before
+verifying changed behavior. A missing or mismatched MCP version/capability is a
+verification gap; do not substitute the installed CLI's identity.
 
 Launch `robostickies mcp` from the agent's repository or working directory.
 The process selects the containing Git root, or its working directory outside
@@ -48,8 +83,9 @@ Record brief, concrete observations while working, then continue your task:
 
 For a verified fix, retain `papercut`, add `resolved`, record verification
 evidence, and archive. Verify in the affected environment; MCP fixes require
-installation and an agent restart followed by checks through the installed
-connection. Archived status alone does not prove resolution.
+installation and checks through a newly started agent MCP connection. A separate
+fresh testing agent can supply that connection while the current session continues.
+Archived status alone does not prove resolution.
 
 For reusable guidance, retain `paperclip`, add `adopted` after the guidance exists
 in the appropriately scoped AGENTS.md and has been reviewed, record its destination,
@@ -1076,7 +1112,7 @@ impl Store {
 
     /// Portable paragraph callers may place into their own AGENTS.md format.
     pub fn agents_snippet(&self) -> String {
-        "At the start of work, run `robostickies context` or call the MCP `get_context` tool to read tag topics and startup guidance. Record brief, concrete friction and useful wins with the defined tags while continuing your task. See [.robostickies/README.md](.robostickies/README.md) for details. Keep private observations in the private namespace; publish an explicit public copy before including them in public review.\n".into()
+        "At the start of work, run `robostickies context` or call the MCP `get_context` tool. Inspect upgrade advice and warnings even when validation is healthy, then read tag topics and startup guidance. Use MCP `version` to identify the running server after installation; the CLI's version does not identify an existing MCP process. Record concrete friction and useful wins with the defined tags while continuing your task. See [.robostickies/README.md](.robostickies/README.md) for details. Keep private observations in the private namespace; publish an explicit public copy before including them in public review.\n".into()
     }
 
     /// Rebuild the entire disposable index and return source validation results.

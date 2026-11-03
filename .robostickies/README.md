@@ -3,6 +3,29 @@
 At the start of work, read the tag catalog and the full guidance for tags marked
 `read_on_start`. Use `robostickies context` or the MCP `get_context` tool.
 
+Inspect the returned `upgrade.requirement`, `upgrade.message`, and `warnings`
+before deciding whether maintenance is needed. Healthy validation and empty
+diagnostics do not mean that the store data version is current:
+
+- `none`: no data migration is needed. A new executable alone does not require
+  migration or an index rebuild.
+- `should`: tell the user an optional upgrade is recommended, unless
+  `upgrade.deferred` is true. Offer a preview, explicit upgrade, or deferral;
+  respect a saved deferral instead of repeating the reminder.
+- `must`: explain the required migration before ordinary work. Status and
+  supported migration operations remain available.
+
+Use `upgrade_store` with `dry_run: true` to preview, without those options to
+apply, or with `defer: true` to decline the optional target. CLI equivalents are
+`upgrade --dry-run`, `upgrade`, and `upgrade --defer`. Do not migrate automatically.
+An uninitialized store needs initialization rather than an upgrade.
+
+For MCP, call `version` to identify the running server's compiled build. CLI
+`--version` identifies that CLI process, not an existing MCP server. After an
+installation, restart/reconnect older servers or use a fresh server before
+verifying changed behavior. A missing or mismatched MCP version/capability is a
+verification gap; do not substitute the installed CLI's identity.
+
 Launch `robostickies mcp` from the agent's repository or working directory.
 The process selects the containing Git root, or its working directory outside
 Git, and keeps that selection for its lifetime. Use `--repo DIR` for an explicit

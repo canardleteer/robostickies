@@ -84,13 +84,15 @@ impl StickyServer {
 #[tool_router]
 impl StickyServer {
     /// Identify this running process from compiled build data, without reading a store.
+    /// Use this after installation: replacing the CLI does not refresh an existing MCP process.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::build_info::BuildInfo>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn version(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
         CallToolResult::structured(serde_json::json!(crate::build_info::version()))
     }
 
-    /// Call this at session start to read tag topics and startup guidance.
-    /// It also returns effective configuration and an optional AGENTS.md paragraph.
+    /// Call this at session start. Inspect upgrade.requirement, upgrade.message,
+    /// upgrade.deferred and warnings even when validation is healthy. Then read tag
+    /// topics and startup guidance. Also returns configuration and an AGENTS.md snippet.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::store::Context>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn get_context(&self, Parameters(input): Parameters<Scoped>) -> CallToolResult {
         self.execute(move |store| store.context(input.scope)).await
@@ -103,8 +105,9 @@ impl StickyServer {
         self.execute(move |store| store.init(input)).await
     }
 
-    /// Upgrade the shared store data version for both namespaces. Set dry_run=true
-    /// to preview without changing sources. Notes and customized guidance are preserved.
+    /// Explicitly upgrade the shared store data version for both namespaces.
+    /// Set dry_run=true to preview, defer=true to decline the optional target, or
+    /// keep_snapshot=true to retain recovery data. Notes and customized guidance are preserved.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::version::UpgradeResult>(), annotations(destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn upgrade_store(&self, Parameters(input): Parameters<UpgradeOptions>) -> CallToolResult {
         self.execute(move |store| store.upgrade_with_options(input))
@@ -185,12 +188,14 @@ impl StickyServer {
     }
 
     /// Inspect effective TOML configuration, privacy defaults, and their source files.
+    /// Read upgrade.requirement/message/deferred and warnings for maintenance advice.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::config::Configuration>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn get_config(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
         self.execute(|store| store.configuration()).await
     }
 
     /// Diagnose invalid sources, unresolved tags, and Git tracking/exclusion problems.
+    /// Healthy validation does not imply current data: inspect the separate upgrade advice.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Health>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn validate_store(&self, Parameters(_): Parameters<EmptyInput>) -> CallToolResult {
         self.execute(|store| store.doctor()).await
