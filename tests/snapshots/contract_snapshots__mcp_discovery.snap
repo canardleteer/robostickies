@@ -1,9 +1,10 @@
 ---
 source: tests/contract_snapshots.rs
-assertion_line: 72
-expression: "json!({\"tools\": tools, \"resources\": resources})"
+assertion_line: 86
+expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resources\": resources})"
 ---
 {
+  "instructions": "Call get_context at the start of work. Inspect upgrade.requirement and upgrade.message independently of healthy and diagnostics. Surface should recommendations unless upgrade.deferred is true; explain must requirements before ordinary work. Offer an explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. Use version to identify this running MCP build. A newer CLI on disk does not refresh an existing server; use a fresh server before verifying changed behavior. Read tag topics and full startup guidance. Record friction with papercut and useful successes with paperclip; other tags and general notes are welcome. Private tags use private:<name> and force ignored local storage. Public review includes only public notes; publish_note makes an explicit public copy. Read get_context for details and a portable AGENTS.md snippet. Use init_store if the repository is not initialized.",
   "resources": [
     {
       "description": "Local configuration defaults and their sources",
@@ -259,7 +260,7 @@ expression: "json!({\"tools\": tools, \"resources\": resources})"
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Inspect effective TOML configuration, privacy defaults, and their source files.",
+      "description": "Inspect effective TOML configuration, privacy defaults, and their source files.\nRead upgrade.requirement/message/deferred and warnings for maintenance advice.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -400,7 +401,7 @@ expression: "json!({\"tools\": tools, \"resources\": resources})"
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Call this at session start to read tag topics and startup guidance.\nIt also returns effective configuration and an optional AGENTS.md paragraph.",
+      "description": "Call this at session start. Inspect upgrade.requirement, upgrade.message,\nupgrade.deferred and warnings even when validation is healthy. Then read tag\ntopics and startup guidance. Also returns configuration and an AGENTS.md snippet.",
       "inputSchema": {
         "$defs": {
           "Scope": {
@@ -2038,7 +2039,7 @@ expression: "json!({\"tools\": tools, \"resources\": resources})"
         "idempotentHint": true,
         "openWorldHint": false
       },
-      "description": "Upgrade the shared store data version for both namespaces. Set dry_run=true\nto preview without changing sources. Notes and customized guidance are preserved.",
+      "description": "Explicitly upgrade the shared store data version for both namespaces.\nSet dry_run=true to preview, defer=true to decline the optional target, or\nkeep_snapshot=true to retain recovery data. Notes and customized guidance are preserved.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -2197,7 +2198,7 @@ expression: "json!({\"tools\": tools, \"resources\": resources})"
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Diagnose invalid sources, unresolved tags, and Git tracking/exclusion problems.",
+      "description": "Diagnose invalid sources, unresolved tags, and Git tracking/exclusion problems.\nHealthy validation does not imply current data: inspect the separate upgrade advice.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -2351,7 +2352,7 @@ expression: "json!({\"tools\": tools, \"resources\": resources})"
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Identify this running process from compiled build data, without reading a store.",
+      "description": "Identify this running process from compiled build data, without reading a store.\nUse this after installation: replacing the CLI does not refresh an existing MCP process.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,

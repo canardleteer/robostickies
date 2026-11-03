@@ -1,6 +1,6 @@
 ---
 source: tests/contract_snapshots.rs
-assertion_line: 53
+assertion_line: 66
 expression: help
 ---
 $ robostickies --help
@@ -156,3 +156,26 @@ Options:
       --user-config <USER_CONFIG>  Override the platform-standard user configuration file
       --no-user-config             Disable user configuration for reproducible automation
   -h, --help                       Print help
+
+$ robostickies mcp --help
+Serve MCP over stdio; stdout is exclusively protocol data.
+
+Existing servers keep their compiled build after installation. Restart or reconnect the client, then call the MCP version tool to identify that server.
+
+Usage: robostickies mcp [OPTIONS]
+
+Options:
+      --repo <REPO>
+          Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+
+      --json
+          Emit structured JSON instead of human-readable output
+
+      --user-config <USER_CONFIG>
+          Override the platform-standard user configuration file
+
+      --no-user-config
+          Disable user configuration for reproducible automation
+
+  -h, --help
+          Print help (see a summary with '-h')

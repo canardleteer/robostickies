@@ -11,9 +11,9 @@ the guide for the task:
 | [Search and review](search-and-review.md) | Select matching notes and prepare a complete review |
 | [Shared editing](shared-editing.md) | Reconcile conflicts between cooperating writers |
 | [Resolution and adoption](outcomes.md) | Record verification and adoption outcomes |
-| [MCP server](mcp.md) | Connect an agent and configure tool approvals |
+| [MCP server](mcp.md) | Connect an agent, verify the running build, inspect startup advice, and configure approvals |
 | [Diagnostics and cache recovery](maintenance.md) | Validate sources and recover the index |
 | [Store versions and upgrades](upgrades.md) | Inspect upgrade advice, defer optional targets, and migrate with recovery snapshots |
-| [Development tasks](development.md) | Run checks, review interface snapshots and per-file coverage, and profile |
+| [Development tasks](development.md) | Run sequential checks, review interface snapshots and per-file coverage, and use review tools |
 
 For work on robostickies itself, see the [development guide](development.md).

@@ -25,6 +25,17 @@ return structured `upgrade` advice with source/target versions, `requirement`,
 | `should` | The older representation is safely usable. Users SHOULD upgrade and MAY invoke the upgrade tool. |
 | `must` | A recognized representation cannot be used safely. Users MUST upgrade before ordinary operations; status and supported migration operations remain available. |
 
+Agents should inspect this object during the startup `get_context` call, even
+when validation is healthy and `diagnostics` is empty. Those diagnostics describe
+source problems; upgrade advice describes the shared data version. Startup/tool
+guidance directs agents to report applicable recommendations and offer explicit
+preview, upgrade, or deferral choices. A saved optional deferral suppresses the
+reminder; it does not change the source version or requirement.
+
+An already-current `v1alpha2` store needs no migration when the executable is
+updated. Initialization is the appropriate action for an absent store. Rebuild
+the cache when diagnostics or recovery require it, rather than after every install.
+
 Both representations registered in this RC are safely usable. A future
 upgrade-only representation must declare its safety boundary and migration.
 Unsupported newer formats require compatible newer tooling: they are never

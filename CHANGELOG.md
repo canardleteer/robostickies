@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0-rc.2](https://github.com/canardleteer/robostickies/compare/v0.2.0-rc.1...v0.2.0-rc.2) - 2026-11-03
+
+- Direct agents to inspect startup upgrade advice independently of validation
+  health, respect optional deferrals, and offer explicit migration choices.
+- Explain how to identify a running MCP build after installing a new executable.
+- Verify startup discovery through ordinary agent questions and snapshot MCP
+  initialization instructions alongside tool/resource contracts.
+- Allow bounded pre-save contention in concurrency tests and improve source,
+  fixture-ownership, and prose/tool review procedures.
+
+CLI/MCP descriptions and startup prose change compatibly. Existing inputs and
+response envelopes retain their shapes. Configuration and stored-data versions
+are unchanged; current stores need no migration for this RC.
+
 ## [0.2.0-rc.1](https://github.com/canardleteer/robostickies/compare/v0.1.1...v0.2.0-rc.1) - 2026-11-02
 
 - Add advisory body-format hints to note creation, editing, and publication.

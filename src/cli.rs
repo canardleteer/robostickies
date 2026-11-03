@@ -172,6 +172,9 @@ enum Command {
         keep_snapshot: bool,
     },
     /// Serve MCP over stdio; stdout is exclusively protocol data.
+    ///
+    /// Existing servers keep their compiled build after installation. Restart or
+    /// reconnect the client, then call the MCP version tool to identify that server.
     Mcp,
 }
 

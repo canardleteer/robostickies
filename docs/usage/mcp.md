@@ -15,6 +15,21 @@ working directory. Start a separate process for each repository.
 
 The binary must be on the client's PATH.
 
+## Session startup
+
+Call `get_context` first. Read its `upgrade.requirement` and `upgrade.message`
+alongside warnings, then read tag topics and full startup guidance. A healthy
+`validate_store` report can still recommend a data upgrade. Surface `should`
+recommendations unless `upgrade.deferred` is true; explain `must` requirements
+before ordinary work. Offer explicit preview, upgrade, or deferral choices instead
+of migrating automatically. See [store upgrades](upgrades.md).
+
+Call the MCP `version` tool to identify the running server. Replacing a CLI binary
+does not update an existing server process. A missing tool or unexpected build is
+a verification gap: restart/reconnect that server or use a new connection before
+relying on changed behavior. CLI `--version` describes a separate CLI invocation.
+Keep each process bound to its intended repository.
+
 ## Codex
 
 Register the server with the Codex CLI:

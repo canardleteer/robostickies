@@ -682,6 +682,57 @@ async fn context_and_all_resources_agree_before_and_after_initialization() {
 }
 
 #[tokio::test]
+async fn startup_discovery_directs_agents_to_advice_independently_of_health() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        let info = client.peer_info().unwrap();
+        let instructions = info.instructions.as_deref().unwrap();
+        assert!(
+            instructions.contains("upgrade.requirement"),
+            "Startup instructions must direct agents to the upgrade requirement"
+        );
+        assert!(instructions.contains("version"));
+        let tools = client.list_all_tools().await.unwrap();
+        for name in ["get_context", "get_config", "validate_store"] {
+            let description = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap()
+                .description
+                .as_deref()
+                .unwrap();
+            assert!(description.contains("upgrade"), "{name}: {description}");
+        }
+        call_mcp(&client, "init_store", json!({})).await;
+        let config = temp.path().join(".robostickies/config.toml");
+        let original = fs::read_to_string(&config).unwrap();
+        for (source, requirement) in [("v1alpha1", "should"), ("v1alpha2", "none")] {
+            fs::write(&config, original.replace("v1alpha2", source)).unwrap();
+            let context = call_mcp(&client, "get_context", json!({})).await;
+            let health = call_mcp(&client, "validate_store", json!({})).await;
+            assert_eq!(health["healthy"], true);
+            assert_eq!(health["diagnostics"], json!([]));
+            assert_eq!(context["upgrade"]["requirement"], requirement);
+            assert_eq!(health["upgrade"], context["upgrade"]);
+            let guidance = context["guidance"].as_str().unwrap();
+            for field in ["upgrade.requirement", "upgrade.message", "deferred"] {
+                assert!(
+                    guidance.contains(field),
+                    "Missing {field} in startup guidance"
+                );
+            }
+            assert!(context["agents_md"].as_str().unwrap().contains("upgrade"));
+            let resource = resource_mcp(&client, "robostickies://guidance").await;
+            assert_eq!(resource["guidance"], context["guidance"]);
+        }
+        client.cancel().await.unwrap();
+    })
+    .await
+    .expect("startup advice discovery test timed out");
+}
+
+#[tokio::test]
 async fn mcp_edits_crlf_nested_frontmatter_and_publishes_a_clean_copy() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let temp = tempfile::tempdir().unwrap();

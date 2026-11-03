@@ -12,7 +12,9 @@ installed MCP server while developing robostickies itself.
 
 At the start of work, run `robostickies context` or call MCP `get_context`.
 Read tag topics and the full guidance for startup tags, and confirm the selected
-repository in local context. Record concrete friction with `papercut` and useful
+repository in local context. Inspect upgrade advice and warnings even when health
+is good. Confirm the running MCP build with `version`; the CLI version does not
+identify an existing MCP process. Record concrete friction with `papercut` and useful
 successes with `paperclip` while continuing the task. Publish a sanitized public
 copy of a private observation before promoting it into tracked guidance.
 
@@ -37,6 +39,10 @@ satisfies the restart requirement for verification without restarting the curren
 session. If using the current session for those checks, wait for the user's
 restart confirmation first. Restart an older MCP process before using it for
 behavior changed by the installation.
+
+Verify startup discovery with an ordinary agent question before giving the tester
+field names or expected recommendations. Keep note, tag, configuration, and guidance
+edits paused until a testing process exits when checking source preservation.
 
 ## Test data
 
@@ -86,6 +92,11 @@ would require low-value tests; explain the uncovered behavior and justification
 in the review. Coverage remains local and is not a percentage CI gate.
 Linux is the supported platform. macOS and Windows checks are informative;
 support for either platform requires explicit adoption.
+
+Run canonical checks, Rust 1.90 verification, and instrumented coverage sequentially
+on the same checkout. Concurrency tests must handle documented pre-save `busy`
+responses with bounded retries, while retaining dedicated timeout tests. Never
+retry a successful save merely because it carries cache warnings.
 
 Keep CI/workflow declarations and script callers aligned with canonical xtask
 behavior when it changes. The xtask stays provider-agnostic and must not inspect

@@ -18,6 +18,12 @@ Confirm `repository_root` in local context. Each MCP process keeps its startup
 repository selection; changing the agent's working directory does not retarget
 it. Public context omits the root entirely.
 
+Call the actual MCP `version` tool and compare its compiled identity with the
+installation checkpoint before verifying changed behavior. A missing tool, old
+catalog, or mismatched build means the connection is unverified. The executable
+on disk and a child CLI's version do not identify an existing MCP process.
+Use one of the fresh-connection routes below rather than claiming an upgrade.
+
 Self-drive observations, synthetic notes, fixture tag definitions, and run records
 are private by default. Use MCP `private: true` or CLI `--private` when creating
 test data. Use public fixtures only when the case requires public visibility.
@@ -49,6 +55,11 @@ configuration and existing observations.
 
 Check `isError` before reading a tool result. Domain failures carry stable codes;
 schema errors may be text-only. Successful results use `structuredContent`.
+
+Check startup `upgrade` advice and `warnings` separately from health/diagnostics.
+Current stores need no migration for a package release; legacy stores can be
+healthy while recommending one. Respect optional deferrals and never migrate
+automatically. An undefined tag returns `not_found`, rather than a usage error.
 Creation and update return `note` inside an envelope, while `get_note` returns the
 note itself. Inspect Markdown to verify paths and frontmatter.
 
@@ -86,6 +97,20 @@ IDs. A private duplicate must leave public list/review unchanged while local
 inspection reports the conflict and ambiguous ID-based operations fail.
 
 ## Turn observations into fixes
+
+For discovery behavior, first run a fresh agent given only an ordinary repository
+orientation or maintenance question and normal product-provided instructions.
+Keep the case setup and expected outcome outside that agent's context. Do not name
+the response fields or commands it is expected to discover, and do not give it
+this testing matrix before recording its answer and actual tool trace. Use
+separate fresh agents for current, legacy, and deferred scenarios. Targeted
+field-level checks follow this pass; prompting the field tests data behavior,
+not discovery. Keep those execution scopes distinct in the report.
+
+During source-preservation checks, keep parent note/tag/configuration/guidance
+edits paused until the testing process exits. Store evidence under the ignored run
+directory; record housekeeping findings afterward. Retain and attribute any final
+comparison difference rather than treating an earlier matching inventory as proof.
 
 A `papercut` explains how to reproduce a problem and what should have happened.
 Describe the actual result and its cost, then suggest a correction if known.
@@ -129,7 +154,8 @@ Find outcome history with `review_notes` and
 explicitly for private history.
 
 Reproduce a defect before changing code. Add a regression test for observable
-behavior and batch related fixes. Review new prose through slop-guard, validate
+behavior and batch related fixes. Review new prose through slop-guard using the
+[review-tool workflow](../../../docs/usage/development.md#review-tools), validate
 the skill, and run the repository quality checks. Before committing, stage
 explicit source or skill paths and inspect the staged changes for generated data.
 
@@ -155,6 +181,11 @@ last-read revisions; never delete the lock file. Rebuild and validate the index.
 Verify that ledger-owned fixture sources are gone and public queries across all
 statuses contain no test artifacts. Inspect the staged paths before committing.
 
+Text markers and counts are not ownership: an unrelated finding may mention the
+run. Compare ledger-owned IDs and preserve the original source inventory. If an
+expectation is wrong, retain the failed assertion and record its adjudication
+against the documented contract; do not silently mark it passed.
+
 ## Install and verify
 
 When a change requires a new MCP binary, finish the batch and verify it with fresh
@@ -163,7 +194,16 @@ the remaining live calls. Retain completed checks and fixture ownership there.
 Run `cargo install --path . --locked --force` once for the batch, verify the
 installed executable, and record its hash.
 
-Choose the verification process that fits the workflow:
+Choose the verification process that fits the workflow. Client launch recipes
+are separate from this portable flow:
+
+| Client | Fresh-connection recipe |
+| --- | --- |
+| Codex | [Separate CLI agent with child-only MCP configuration](references/codex.md) |
+
+Other agents can add their own client reference and table entry. Every recipe
+must pass the same actual-connection identity, repository, behavior, preservation,
+and cleanup checks. A child task or fork alone does not establish a new server.
 
 - Current session: mark the checkpoint awaiting restart and tell the user the
   installation is ready. Stop affected live verification until the user confirms

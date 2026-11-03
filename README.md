@@ -73,7 +73,7 @@ to use it without adding tracked integration files.
 - [Resolution and adoption](docs/usage/outcomes.md) track verified fixes and
   reusable guidance with outcome tags.
 - [MCP tools and resources](docs/usage/mcp.md) let agents manage notes and read
-  repository context and tag guidance.
+  repository context, startup upgrade advice, and tag guidance.
 - [Diagnostics and cache recovery](docs/usage/maintenance.md) validate note
   sources and Git privacy protections, and rebuild the disposable index.
 - [Store versions and upgrades](docs/usage/upgrades.md) report legacy formats
