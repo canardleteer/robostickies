@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/canardleteer/robostickies/compare/v0.2.0-rc.2...v0.2.0) - 2026-11-04
+
+- Promote the validated 0.2.0-rc.2 to stable without application code changes.
+- Include advisory body-format hints, the MCP `version` tool, and explicit
+  store-upgrade advice with optional deferrals and recovery snapshots.
+- Include safer initialization paths, configuration handling, and startup guidance.
+
+Public Rust input/result/error structs have additional fields since 0.1.1;
+struct-literal callers may need updates. CLI and MCP additions are optional.
+Configuration and stored-data versions are unchanged; current stores need no
+migration.
+
 ## [0.2.0-rc.2](https://github.com/canardleteer/robostickies/compare/v0.2.0-rc.1...v0.2.0-rc.2) - 2026-11-03
 
 - Direct agents to inspect startup upgrade advice independently of validation
