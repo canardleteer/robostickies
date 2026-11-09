@@ -46,6 +46,177 @@ fn write_config(store: &Store, version: Option<&str>) {
     fs::write(store.directory().join("config.toml"), format!("# Team settings\nformat_version = 1 # syntax\n{field}\n[tags] # keep table comment\ndefault_private = false\nprivate_patterns = ['shared-*']\n")).unwrap();
 }
 
+fn legacy_note(store: &Store, private: bool, tags: &str, newline: &str) -> Note {
+    let note = store
+        .create_note(CreateNote {
+            body: "Migration fixture".into(),
+            body_format: None,
+            tags: vec![],
+            private: Some(private),
+        })
+        .unwrap()
+        .note;
+    let source = format!("---\n# keep header\nid: {}\ncreated_at: '{}'\nupdated_at: '{}'\ntags:\n{tags} # keep tags\nstatus: active\nextra:\n  nested: [one, two] # keep metadata\n---\nBody without final newline",note.id,note.created_at,note.updated_at).replace('\n',newline);
+    fs::write(store.directory().join(&note.path), source).unwrap();
+    store.get_note(&note.id).unwrap()
+}
+
+#[test]
+fn v1alpha3_repairs_only_versioned_sources_and_leaves_cache_values_and_unaffected_files_intact() {
+    for cache in ["warm", "missing", "corrupt"] {
+        for newline in ["\n", "\r\n"] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::with_user_config(temp.path(), None).unwrap();
+            store.init(InitOptions::default()).unwrap();
+            write_config(&store, Some("'v1alpha2'"));
+            let mut notes = vec![];
+            for private in [false, true] {
+                for tags in ["[\"papercut\"]", "[]"] {
+                    notes.push(legacy_note(&store, private, tags, newline));
+                }
+            }
+            let valid = store
+                .create_note(CreateNote {
+                    body: "Unchanged valid fixture".into(),
+                    body_format: None,
+                    tags: vec![],
+                    private: Some(true),
+                })
+                .unwrap()
+                .note;
+            store.reindex().unwrap();
+            let index = store.directory().join("cache/index.redb");
+            match cache {
+                "missing" => fs::remove_file(&index).unwrap(),
+                "corrupt" => fs::write(&index, b"broken cache").unwrap(),
+                _ => {}
+            }
+            let cache_before = fs::read(&index).ok();
+            let before = sources(temp.path());
+            for note in &notes {
+                assert_eq!(
+                    store
+                        .update_note(UpdateNote {
+                            id: note.id.clone(),
+                            expected_revision: note.revision.clone(),
+                            body: Some("No implicit migration".into()),
+                            ..UpdateNote::default()
+                        })
+                        .unwrap_err()
+                        .code,
+                    "invalid_document"
+                );
+            }
+            assert_eq!(sources(temp.path()), before);
+            let preview = store.upgrade(true).unwrap();
+            assert_eq!(preview.source_version.as_str(), "v1alpha2");
+            assert_eq!(preview.target_version.as_str(), "v1alpha3");
+            assert!(preview.dry_run && !preview.wrote && preview.snapshot.is_none());
+            assert_eq!(sources(temp.path()), before);
+            assert_eq!(fs::read(&index).ok(), cache_before);
+            let mut expected = before.clone();
+            let config = PathBuf::from(".robostickies/config.toml");
+            let text = String::from_utf8(expected[&config].clone())
+                .unwrap()
+                .replace("'v1alpha2'", "\"v1alpha3\"");
+            expected.insert(config, text.into_bytes());
+            for note in &notes {
+                let path = Path::new(".robostickies").join(&note.path);
+                let text = String::from_utf8(expected[&path].clone())
+                    .unwrap()
+                    .replace(&format!("tags:{newline}["), &format!("tags:{newline}  ["));
+                expected.insert(path, text.into_bytes());
+            }
+            let upgraded = store.upgrade(false).unwrap();
+            assert!(upgraded.wrote && !upgraded.snapshot.unwrap().retained);
+            assert_eq!(sources(temp.path()), expected);
+            assert_eq!(fs::read(&index).ok(), cache_before);
+            assert_eq!(store.get_note(&valid.id).unwrap().revision, valid.revision);
+            for old in &notes {
+                let read = store.get_note(&old.id).unwrap();
+                assert_eq!(read.id, old.id);
+                assert_eq!(read.created_at, old.created_at);
+                assert_eq!(read.updated_at, old.updated_at);
+                assert_eq!(read.tags, old.tags);
+                assert_eq!(read.status, old.status);
+                assert_eq!(read.metadata, old.metadata);
+                assert_eq!(read.body, old.body);
+                assert_eq!(read.visibility, old.visibility);
+                assert_ne!(read.revision, old.revision);
+                assert_eq!(
+                    store
+                        .update_note(UpdateNote {
+                            id: old.id.clone(),
+                            expected_revision: old.revision.clone(),
+                            body: Some("stale".into()),
+                            ..UpdateNote::default()
+                        })
+                        .unwrap_err()
+                        .code,
+                    "conflict"
+                );
+            }
+            assert!(!store.upgrade(false).unwrap().wrote);
+            assert_eq!(sources(temp.path()), expected);
+            assert!(store.doctor().unwrap().healthy);
+        }
+    }
+}
+
+#[test]
+fn v1alpha3_revalidates_legacy_cached_parses_without_exporting_private_diagnostics() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::with_user_config(temp.path(), None).unwrap();
+    store.init(InitOptions::default()).unwrap();
+    write_config(&store, Some("'v1alpha2'"));
+    let note = legacy_note(&store, true, "[]", "\n");
+    assert_eq!(store.list_notes(Query::default()).unwrap().total, 1);
+    write_config(&store, Some("'v1alpha3'"));
+    assert_eq!(
+        store.get_note(&note.id).unwrap_err().code,
+        "invalid_document"
+    );
+    assert!(!store.doctor().unwrap().healthy);
+    let public = store
+        .list_notes(Query {
+            scope: Some(Scope::Public),
+            ..Query::default()
+        })
+        .unwrap();
+    assert_eq!(public.total, 0);
+    assert!(public.diagnostics.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_source_replacement_restores_prior_writes_and_keeps_a_verified_recovery_copy() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::with_user_config(temp.path(), None).unwrap();
+    store.init(InitOptions::default()).unwrap();
+    write_config(&store, Some("'v1alpha2'"));
+    legacy_note(&store, false, "[\"papercut\"]", "\n");
+    legacy_note(&store, true, "[]", "\r\n");
+    let directory = store.directory().join("private/notes");
+    let permissions = fs::metadata(&directory).unwrap().permissions();
+    let before = sources(temp.path());
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
+    assert!(!store.upgrade(true).unwrap().wrote);
+    let result = store.upgrade(false);
+    fs::set_permissions(directory, permissions).unwrap();
+    let error = result.unwrap_err();
+    assert_eq!(error.code, "io");
+    assert!(error.message.contains("writes were restored"));
+    assert_eq!(sources(temp.path()), before);
+    let snapshot = error.snapshot.unwrap();
+    assert!(snapshot.retained);
+    assert_eq!(
+        fs::read(temp.path().join(snapshot.path).join("config.toml")).unwrap(),
+        fs::read(store.directory().join("config.toml")).unwrap()
+    );
+    assert!(store.upgrade(false).unwrap().wrote);
+}
+
 #[test]
 fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache_states() {
     for cache in ["warm", "missing", "corrupt"] {
@@ -147,9 +318,9 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             let mut expected = before.clone();
             expected.remove(Path::new(".robostickies/config.toml"));
             assert_eq!(after, expected);
-            assert!(migrated.contains("data_version = \"v1alpha2\""));
+            assert!(migrated.contains("data_version = \"v1alpha3\""));
             assert_eq!(
-                migrated.replace(&format!("data_version = \"v1alpha2\"{line_ending}"), ""),
+                migrated.replace(&format!("data_version = \"v1alpha3\"{line_ending}"), ""),
                 original_config
             );
             for old in &notes {
@@ -204,7 +375,7 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
 
 #[test]
 fn explicit_versions_and_config_only_stores_upgrade_without_scaffolding() {
-    for version in ["'v1alpha1'", "'v1alpha2'"] {
+    for version in ["'v1alpha1'", "'v1alpha2'", "'v1alpha3'"] {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::with_user_config(temp.path(), None).unwrap();
         fs::create_dir(store.directory()).unwrap();
@@ -213,9 +384,9 @@ fn explicit_versions_and_config_only_stores_upgrade_without_scaffolding() {
         assert!(!store.upgrade(true).unwrap().wrote);
         let result = store.upgrade(false).unwrap();
         let after = fs::read_to_string(store.directory().join("config.toml")).unwrap();
-        if version.contains("alpha1") {
+        if !version.contains("alpha3") {
             assert!(result.wrote);
-            assert_eq!(after, before.replace("'v1alpha1'", "\"v1alpha2\""));
+            assert_eq!(after, before.replace(version, "\"v1alpha3\""));
         } else {
             assert!(!result.wrote);
             assert_eq!(before, after);
@@ -398,7 +569,7 @@ fn deferrals_are_private_target_specific_and_do_not_change_sources_or_public_adv
         public_before
     );
     let preference = store.directory().join("private/upgrade-preferences.toml");
-    for previous in ["v1alpha1", "a-previous-target"] {
+    for previous in ["v1alpha1", "v1alpha2", "a-previous-target"] {
         fs::write(&preference, format!("deferred_target = '{previous}'\n")).unwrap();
         assert!(!store.configuration().unwrap().upgrade.deferred);
     }

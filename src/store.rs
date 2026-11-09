@@ -20,6 +20,7 @@ use crate::{
     config::{self, Configuration},
     document,
     index::{self, Index},
+    migration::{self, Change},
     model::*,
     snapshot::Snapshot,
     version::{self, DataVersion, UpgradeAdvice, UpgradeResult},
@@ -111,6 +112,16 @@ contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
 (`active` or `archived`); the body is nonempty UTF-8 text, preferably Markdown
 or plain text. Optional `body_format` metadata is advisory and never interprets
 the body. Additional metadata is retained when editing. The files are authoritative; the redb index is disposable.
+
+Legacy YAML repairs run only through an explicit store upgrade. Ordinary edits
+reject malformed legacy frontmatter instead of silently migrating it. Preview an
+older store's upgrade or correct the source before editing.
+After upgrading, read notes again before editing; repaired files have new revisions.
+
+YAML edits preserve comments. Comments displaced by replacing or clearing a value
+are retained at the end of the frontmatter, before its closing `---`. When working
+on that frontmatter, review displaced comments: relocate or remove them when their
+intent is clear, and ask the user when it is uncertain.
 
 Edits, archive/unarchive, and publishing (including previews) require the revision
 from the last successful read or save. Use CLI `--if-match` or MCP
@@ -404,6 +415,11 @@ impl Store {
         Ok(private)
     }
 
+    fn parse_note(&self, text: &str, path: &str, visibility: Visibility) -> Result<Note> {
+        let version = config::load_shared(&self.directory())?.data_version;
+        document::parse_note_for_version(text, path, visibility, version)
+    }
+
     fn read_note(&self, id: &str) -> Result<(Note, String)> {
         document::note_id(id)?;
         let mut found = None;
@@ -421,7 +437,7 @@ impl Store {
                     "Multiple files have this note ID; run doctor and give manually copied notes a new UUID",
                 ));
             }
-            found = Some((document::parse_note(&text, &relative, physical)?, text));
+            found = Some((self.parse_note(&text, &relative, physical)?, text));
         }
         found.ok_or_else(|| {
             Error::new(
@@ -471,7 +487,7 @@ impl Store {
             self.assert_ignored(&note.path)?;
         }
         let text = document::render_note(&note)?;
-        let note = document::parse_note(&text, &note.path, note.visibility)?;
+        let note = self.parse_note(&text, &note.path, note.visibility)?;
         document::atomic_write(&path, &text, false)?;
         Ok(note)
     }
@@ -636,7 +652,7 @@ impl Store {
     /// Upgrade both namespaces by migrating the shared configuration atomically.
     /// A dry run validates the same inputs without writing sources. Existing
     /// initialization never upgrades a store; repeated upgrades are idempotent.
-    /// Notes, tags, guidance, and cache files are not migrated by this step.
+    /// Versioned source repairs preserve note values, timestamps, privacy, and guidance.
     ///
     /// # Errors
     /// Returns `not_initialized` for an absent store, `configuration` for invalid
@@ -651,7 +667,7 @@ impl Store {
 
     /// Explicitly migrate, preview, or defer an optional upgrade. Changes receive a
     /// verified private snapshot before the first write. Failed migration/validation
-    /// retains that copy without automatic rollback; successful source validation
+    /// attempts to restore its own writes and retains the copy; successful validation
     /// permits cleanup unless retention was requested. Cache repair is separate.
     ///
     /// # Errors
@@ -699,28 +715,24 @@ impl Store {
         let path = self.checked("config.toml")?;
         let original = fs::read_to_string(&path)?;
         if options.dry_run {
-            version::apply_migrations(&original, source_version, config::validate_migration)?;
-            index::validate_sources(&self.directory())?;
+            self.prepare_upgrade(&original, source_version)?;
             return Ok(result);
         }
         let snapshot = Snapshot::create(&self.directory(), |relative| {
             self.assert_upgrade_ignored(relative)
         })?;
         let migration = (|| {
-            index::validate_sources(&self.directory())?;
-            version::apply_migrations(&original, source_version, |migrated, target| {
-                config::validate_migration(migrated, target)?;
-                document::atomic_write(&path, migrated, true)?;
-                let actual = self.configuration_unlocked()?;
-                if actual.data_version.as_str() != target {
+            let changes = self.prepare_upgrade(&original, source_version)?;
+            snapshot.verify_sources(&self.directory())?;
+            migration::commit(&changes, || {
+                if self.configuration_unlocked()?.data_version != version::CURRENT {
                     return Err(Error::new(
                         "configuration",
                         "Saved migration target did not validate",
                     ));
                 }
                 index::validate_sources(&self.directory())
-            })?;
-            Ok(())
+            })
         })();
         migration.map_err(|error: Error| error.with_snapshot(snapshot.result.clone()))?;
         let (snapshot, warnings) = snapshot.finish(options.keep_snapshot);
@@ -729,6 +741,44 @@ impl Store {
         result.warnings.extend(warnings);
         result.upgrade = UpgradeAdvice::new(version::CURRENT, None);
         Ok(result)
+    }
+
+    fn prepare_upgrade(&self, original: &str, source: DataVersion) -> Result<Vec<Change>> {
+        let notes = index::validated_notes(&self.directory())?;
+        let mut changes = Vec::new();
+        let migrated = version::apply_migrations(original, source, |candidate, target| {
+            config::validate_migration(candidate, target)?;
+            if target == DataVersion::V1Alpha3.as_str() {
+                for note in &notes {
+                    let path = self.checked(&note.path)?;
+                    let before = fs::read_to_string(&path)?;
+                    if document::fingerprint(&before) != note.revision {
+                        return Err(Error::new(
+                            "conflict",
+                            "Migration source changed during preparation",
+                        ));
+                    }
+                    let after = document::migrate_note_v1alpha3(&before)?;
+                    document::parse_note_for_version(
+                        &after,
+                        &note.path,
+                        note.visibility,
+                        DataVersion::V1Alpha3,
+                    )?;
+                    if before != after {
+                        changes.push(Change::new(path, before, after)?);
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        // Commit the shared marker only after every prepared note replacement.
+        changes.push(Change::new(
+            self.checked("config.toml")?,
+            original.to_owned(),
+            migrated,
+        )?);
+        Ok(changes)
     }
 
     fn assert_upgrade_ignored(&self, relative: &Path) -> Result<()> {
@@ -916,7 +966,7 @@ impl Store {
             note.id
         );
         let text = document::patch_note(&original, &note, &input)?;
-        let updated = document::parse_note(&text, &note.path, note.visibility)?;
+        let updated = self.parse_note(&text, &note.path, note.visibility)?;
         let target = self.checked(&note.path)?;
         if note.visibility == Visibility::Private {
             self.assert_ignored(&note.path)?;
@@ -977,7 +1027,7 @@ impl Store {
         let (note, warnings) = if input.dry_run {
             let text = document::render_note(&note)?;
             (
-                document::parse_note(&text, &note.path, Visibility::Public)?,
+                self.parse_note(&text, &note.path, Visibility::Public)?,
                 vec![],
             )
         } else {

@@ -44,7 +44,17 @@ UUIDv7. Notes support `active` and `archived` status. Git retains the history of
 shared edits; the index is rebuilt from current files after edits or checkouts.
 
 Edits retain custom frontmatter metadata and comments. They preserve the
-file's LF or CRLF convention, including replacement body text.
+file's LF or CRLF convention, including replacement body text. Frontmatter-only
+edits preserve body bytes, including the absence of a final newline.
+Tag updates preserve sequence indentation and comments. Clearing tags writes
+an empty YAML sequence. The explicit `v1alpha2` → `v1alpha3` store upgrade repairs
+flow tag lists left unindented by older writers. Ordinary edits reject those
+malformed sources; see [store upgrades](upgrades.md).
+
+Comments displaced by replacing or clearing a YAML value are retained verbatim
+at the end of the frontmatter, before its closing `---`, including repeated
+comments. When working on that frontmatter, review those comments and relocate
+or remove them when their intent is clear. Ask the user when it is uncertain.
 
 Bodies contain nonempty UTF-8 text; Markdown or plain text is preferred. An
 optional string `body_format: markdown` in frontmatter is an advisory hint,

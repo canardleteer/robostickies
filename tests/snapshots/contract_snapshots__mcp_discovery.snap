@@ -1,6 +1,5 @@
 ---
 source: tests/contract_snapshots.rs
-assertion_line: 86
 expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resources\": resources})"
 ---
 {
@@ -281,6 +280,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha2",
                 "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha3",
+                "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
+                "type": "string"
               }
             ]
           },
@@ -491,6 +495,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha2",
                 "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha3",
+                "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
                 "type": "string"
               }
             ]
@@ -1498,6 +1507,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha2",
                 "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha3",
+                "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
+                "type": "string"
               }
             ]
           },
@@ -2039,7 +2053,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "idempotentHint": true,
         "openWorldHint": false
       },
-      "description": "Explicitly upgrade the shared store data version for both namespaces.\nSet dry_run=true to preview, defer=true to decline the optional target, or\nkeep_snapshot=true to retain recovery data. Notes and customized guidance are preserved.",
+      "description": "Explicitly upgrade the shared store data version for both namespaces.\nSet dry_run=true to preview, defer=true to decline the optional target, or\nkeep_snapshot=true to retain recovery data. Note values and customized guidance\nare preserved; repaired sources receive new revisions. Re-read before editing.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -2075,6 +2089,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha2",
                 "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha3",
+                "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
                 "type": "string"
               }
             ]
@@ -2218,6 +2237,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha2",
                 "description": "Explicit repository-wide version marker; Markdown layout is unchanged.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha3",
+                "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
                 "type": "string"
               }
             ]

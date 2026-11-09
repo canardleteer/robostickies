@@ -118,6 +118,17 @@ impl Snapshot {
         }
         (self.result, warnings)
     }
+
+    /// Ensure preparation used the same authoritative sources as the recovery copy.
+    pub fn verify_sources(&self, root: &Path) -> Result<()> {
+        if inventory(root, true)? != inventory(&self.directory, false)? {
+            return Err(Error::new(
+                "conflict",
+                "Sources changed after the recovery snapshot; migration was not started",
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn inventory(root: &Path, exclude_generated: bool) -> Result<BTreeMap<PathBuf, Entry>> {
@@ -230,6 +241,17 @@ mod tests {
         );
         assert!(!temp.path().join("private").exists());
         let snapshot = Snapshot::create(temp.path(), |_| Ok(())).unwrap();
+        snapshot.verify_sources(temp.path()).unwrap();
+        fs::write(temp.path().join("config.toml"), "external edit").unwrap();
+        assert_eq!(
+            snapshot.verify_sources(temp.path()).unwrap_err().code,
+            "conflict"
+        );
+        assert_eq!(
+            fs::read_to_string(snapshot.directory.join("config.toml")).unwrap(),
+            "original"
+        );
+        fs::write(temp.path().join("config.toml"), "original").unwrap();
         let path = snapshot.directory.clone();
         let (result, warnings) = snapshot.finish(false);
         assert!(!result.retained && warnings.is_empty());

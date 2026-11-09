@@ -41,7 +41,7 @@ impl Error {
 
     pub(crate) fn with_snapshot(mut self, snapshot: crate::version::SnapshotResult) -> Self {
         self.message.push_str(&format!(
-            "; recovery snapshot retained at {} (no automatic rollback)",
+            "; recovery snapshot retained at {}",
             snapshot.path
         ));
         self.snapshot = Some(snapshot);

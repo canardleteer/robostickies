@@ -160,6 +160,21 @@ pub(crate) fn parse_note(text: &str, path: &str, physical: Visibility) -> Result
     })
 }
 
+pub(crate) fn parse_note_for_version(
+    text: &str,
+    path: &str,
+    physical: Visibility,
+    version: crate::version::DataVersion,
+) -> Result<Note> {
+    let note = parse_note(text, path, physical)?;
+    if version.requires_valid_tag_indentation() {
+        let (yaml, _) = split(text)?;
+        let document = noyalib::cst::parse_document(yaml).map_err(yaml_error)?;
+        require_valid_tag_indentation(&document)?;
+    }
+    Ok(note)
+}
+
 pub(crate) fn parse_tag(text: &str, name: &str) -> Result<Tag> {
     let (visibility, _) = tag_name(name)?;
     let (yaml, body) = split(text)?;
@@ -176,6 +191,19 @@ pub(crate) fn parse_tag(text: &str, name: &str) -> Result<Tag> {
         revision: fingerprint(text),
         metadata: header.metadata,
     })
+}
+
+fn replace_frontmatter(original: &str, yaml: &str, replacement: &str) -> Result<String> {
+    let offset = original
+        .find('\n')
+        .ok_or_else(|| invalid("Missing frontmatter line break"))?
+        + 1;
+    Ok(format!(
+        "{}{}{}",
+        &original[..offset],
+        replacement,
+        &original[offset + yaml.len()..]
+    ))
 }
 
 fn assemble(yaml: &str, body: &str) -> String {
@@ -218,53 +246,186 @@ pub(crate) fn render_tag(input: &CreateTag) -> Result<String> {
     Ok(assemble(&yaml, &input.body))
 }
 
+// Use the CST's classifications rather than scanning YAML ourselves. Block scalar
+// headers and their comments share one token in noyalib 0.0.58; load_comments
+// omits those header comments.
+fn yaml_tokens(document: &noyalib::cst::Document) -> Vec<(noyalib::cst::SyntaxKind, usize, &str)> {
+    fn collect<'a>(
+        node: &noyalib::cst::GreenNode,
+        source: &'a str,
+        mut offset: usize,
+        out: &mut Vec<(noyalib::cst::SyntaxKind, usize, &'a str)>,
+    ) {
+        for child in node.children() {
+            match child {
+                noyalib::cst::GreenChild::Node(node) => collect(node, source, offset, out),
+                noyalib::cst::GreenChild::Token { kind, len } => {
+                    out.push((*kind, offset, &source[offset..offset + *len as usize]))
+                }
+            }
+            offset += child.text_len();
+        }
+    }
+    let mut tokens = Vec::new();
+    collect(document.syntax(), document.source(), 0, &mut tokens);
+    tokens
+}
+
+fn yaml_comments(document: &noyalib::cst::Document) -> Vec<String> {
+    use noyalib::cst::SyntaxKind;
+    yaml_tokens(document)
+        .into_iter()
+        .filter_map(|(kind, _, text)| match kind {
+            SyntaxKind::Comment => Some(text.trim_end_matches('\r').to_owned()),
+            SyntaxKind::LiteralScalar | SyntaxKind::FoldedScalar => text
+                .lines()
+                .next()?
+                .split_once('#')
+                .map(|(_, body)| format!("#{body}")),
+            _ => None,
+        })
+        .collect()
+}
+
+fn yaml_alias(document: &noyalib::cst::Document, path: &str) -> bool {
+    use noyalib::cst::SyntaxKind;
+    let Some((_, key_end)) = document.key_span(path) else {
+        return false;
+    };
+    // span_at resolves an alias to its anchor; inspect the entry's own token.
+    yaml_tokens(document)
+        .into_iter()
+        .find(|(kind, start, _)| {
+            *start >= key_end
+                && !matches!(
+                    kind,
+                    SyntaxKind::ColonIndicator
+                        | SyntaxKind::Whitespace
+                        | SyntaxKind::Newline
+                        | SyntaxKind::Comment
+                )
+        })
+        .is_some_and(|(kind, _, _)| kind == SyntaxKind::AliasMark)
+}
+
+fn unindented_flow_sequence(document: &noyalib::cst::Document, path: &str) -> Option<usize> {
+    let (start, _) = document.span_at(path)?;
+    (document.source().as_bytes().get(start) == Some(&b'[')
+        && document.source()[..start].rsplit('\n').next() == Some(""))
+    .then_some(start)
+}
+
+fn require_valid_tag_indentation(document: &noyalib::cst::Document) -> Result<()> {
+    if unindented_flow_sequence(document, "tags").is_some() {
+        return Err(invalid(
+            "Unindented flow tags require an explicit legacy-store upgrade or a source correction before editing",
+        ));
+    }
+    Ok(())
+}
+
+/// Prepare the v1alpha3 source transformation; ordinary edits never call this.
+/// Only missing indentation changes. Delimiters, body, and all YAML values survive.
+pub(crate) fn migrate_note_v1alpha3(original: &str) -> Result<String> {
+    let (yaml, _) = split(original)?;
+    let mut document = noyalib::cst::parse_document(yaml).map_err(yaml_error)?;
+    let Some(start) = unindented_flow_sequence(&document, "tags") else {
+        return Ok(original.to_owned());
+    };
+    let expected = (*document.as_value()).clone();
+    document
+        .replace_span(start, start, &" ".repeat(document.indent_unit()))
+        .map_err(yaml_error)?;
+    if *document.as_value() != expected {
+        return Err(invalid("YAML migration changed frontmatter values"));
+    }
+    require_valid_tag_indentation(&document)?;
+    replace_frontmatter(original, yaml, document.source())
+}
+
 pub(crate) fn patch_note(original: &str, note: &Note, patch: &UpdateNote) -> Result<String> {
-    let (yaml, original_body) = split(original)?;
+    use noyalib::Value as YamlValue;
+    let (yaml, _) = split(original)?;
     let newline = if original.starts_with("---\r\n") {
         "\r\n"
     } else {
         "\n"
     };
     let mut document = noyalib::cst::parse_document(yaml).map_err(yaml_error)?;
-    let mut set = |key: &str, value: Value| -> Result<()> {
-        let fragment = value.to_string();
-        if document.get(key).is_some() {
-            document.set(key, &fragment).map_err(yaml_error)
+    require_valid_tag_indentation(&document)?;
+    let comments = yaml_comments(&document);
+    let mut set = |key: &str, value: YamlValue| -> Result<()> {
+        if value.as_sequence().is_some()
+            && yaml_alias(&document, key)
+            && document.as_value()[key] != value
+        {
+            // set_value refuses a collection over an alias token. set's literal
+            // fragment replaces only that reference, leaving its anchor intact.
+            let config = noyalib::SerializerConfig::new().flow_style(noyalib::FlowStyle::Flow);
+            let fragment =
+                noyalib::to_string_value_with_config(&value, &config).map_err(yaml_error)?;
+            document
+                .set(key, fragment.trim_end_matches('\n'))
+                .map_err(yaml_error)?;
         } else {
-            let yaml = document.to_string();
-            let separator = if yaml.ends_with('\n') { "" } else { newline };
-            document = noyalib::cst::parse_document(&format!(
-                "{yaml}{separator}{key}: {fragment}{newline}"
-            ))
-            .map_err(yaml_error)?;
-            Ok(())
+            document.set_path(key, &value).map_err(yaml_error)?;
         }
+        // The pinned writer can leave a new empty flow sequence at column zero
+        // when replacing an indentless block sequence. Fix only the new output.
+        if value.as_sequence().is_some()
+            && let Some(start) = unindented_flow_sequence(&document, key)
+        {
+            document
+                .replace_span(start, start, &" ".repeat(document.indent_unit()))
+                .map_err(yaml_error)?;
+        }
+        Ok(())
     };
-    set("updated_at", Value::String(note.updated_at.clone()))?;
+    set("updated_at", YamlValue::String(note.updated_at.clone()))?;
     if patch.tags.is_some() {
-        set(
-            "tags",
-            Value::Array(note.tags.iter().cloned().map(Value::String).collect()),
-        )?;
+        set("tags", noyalib::to_value(&note.tags).map_err(yaml_error)?)?;
     }
     if patch.status.is_some() {
-        set("status", Value::String(note.status.as_str().into()))?;
+        set("status", YamlValue::String(note.status.as_str().into()))?;
     }
     if let Some(hint) = &patch.body_format {
-        set("body_format", Value::String(hint.clone()))?;
+        set("body_format", YamlValue::String(hint.clone()))?;
     }
     if patch.clear_body_format && document.get("body_format").is_some() {
+        // remove in 0.0.58 can strand comment-shaped block scalar content as
+        // YAML comments. Empty the value first; the CST owns both operations.
+        document
+            .set_value("body_format", &YamlValue::Null)
+            .map_err(yaml_error)?;
         document.remove("body_format").map_err(yaml_error)?;
     }
-    let body = patch
-        .body
-        .as_deref()
-        .map(|body| body.replace("\r\n", "\n").replace('\n', newline));
-    Ok(assemble_with_newline(
-        &document.to_string(),
-        body.as_deref().unwrap_or(original_body),
-        newline,
-    ))
+    let mut retained = yaml_comments(&document);
+    let mut displaced = String::new();
+    for comment in comments {
+        if let Some(index) = retained.iter().position(|text| *text == comment) {
+            retained.remove(index);
+        } else {
+            displaced.push_str(&comment);
+            displaced.push_str(newline);
+        }
+    }
+    if !displaced.is_empty() {
+        let end = document.source().len();
+        let separator = if document.source().ends_with('\n') {
+            ""
+        } else {
+            newline
+        };
+        document
+            .replace_span(end, end, &format!("{separator}{displaced}"))
+            .map_err(yaml_error)?;
+    }
+    if let Some(body) = &patch.body {
+        let body = body.replace("\r\n", "\n").replace('\n', newline);
+        Ok(assemble_with_newline(document.source(), &body, newline))
+    } else {
+        replace_frontmatter(original, yaml, document.source())
+    }
 }
 
 pub(crate) fn set_body_format(
@@ -477,11 +638,279 @@ mod tests {
                 if newline == "\r\n" {
                     assert!(!edited.replace("\r\n", "").contains('\n'));
                 }
-                assert!(edited.contains(&metadata));
+                // set_path inserts missing entries before the mapping's trailing
+                // blank lines; both the metadata and that separation survive.
+                assert!(edited.contains(metadata.trim_end_matches(['\r', '\n'])));
+                assert!(split(&edited).unwrap().0.ends_with(&newline.repeat(2)));
                 let read = parse_note(&edited, &note.path, Visibility::Private).unwrap();
                 assert_eq!(read.metadata, note.metadata);
                 assert_eq!(read.tags, note.tags);
                 assert_eq!(read.body, format!("First{newline}Second{newline}"));
+            }
+        }
+    }
+
+    #[test]
+    fn edits_retain_comments_from_replaced_and_cleared_fields() {
+        use saphyr::LoadableYamlNode;
+
+        for newline in ["\n", "\r\n"] {
+            for clear_hint in [false, true] {
+                for tags in [vec!["resolved".to_owned()], vec![]] {
+                    let original = source()
+                        .replace(
+                            "updated_at: 2026-01-01T00:00:00Z",
+                            "updated_at: |- # timestamp\n  2026-01-01T00:00:00Z",
+                        )
+                        .replace(
+                            "---\nBody",
+                            concat!(
+                                "tags:\n  - papercut #duplicate\n  - paperclip #duplicate\n",
+                                "status: >- # status\n  active\n",
+                                "# hint heading\nbody_format: |- # hint header\n  markdown\n",
+                                "extra:\n  literal: | # metadata header\n    # literal data\n",
+                                "---\nBody",
+                            ),
+                        )
+                        .replace('\n', newline);
+                    let mut note =
+                        parse_note(&original, &format!("notes/{ID}.md"), Visibility::Public)
+                            .unwrap();
+                    note.updated_at = "2026-11-08T01:02:03Z".into();
+                    note.tags = tags;
+                    note.status = NoteStatus::Archived;
+                    let patch = UpdateNote {
+                        tags: Some(note.tags.clone()),
+                        status: Some(note.status),
+                        body_format: (!clear_hint).then(|| "text".into()),
+                        clear_body_format: clear_hint,
+                        ..UpdateNote::default()
+                    };
+                    let edited = patch_note(&original, &note, &patch).unwrap();
+                    for comment in [
+                        "# timestamp",
+                        "#duplicate",
+                        "# status",
+                        "# hint heading",
+                        "# hint header",
+                        "# metadata header",
+                    ] {
+                        assert_eq!(
+                            edited.matches(comment).count(),
+                            original.matches(comment).count(),
+                            "Lost {comment}: {edited}"
+                        );
+                    }
+                    let footer = format!(
+                        "# timestamp{newline}#duplicate{newline}# status{newline}{}# hint header{newline}",
+                        if clear_hint {
+                            format!("# hint heading{newline}")
+                        } else {
+                            String::new()
+                        }
+                    );
+                    assert!(split(&edited).unwrap().0.ends_with(&footer));
+                    assert!(
+                        edited.contains(
+                            &"extra:\n  literal: | # metadata header\n    # literal data\n"
+                                .replace('\n', newline)
+                        )
+                    );
+                    let read = parse_note(&edited, &note.path, Visibility::Public).unwrap();
+                    assert_eq!(read.updated_at, note.updated_at);
+                    assert_eq!(read.tags, note.tags);
+                    assert_eq!(read.status, note.status);
+                    assert_eq!(read.metadata["extra"], note.metadata["extra"]);
+                    assert_eq!(
+                        read.metadata.get("body_format"),
+                        (!clear_hint).then_some(&Value::String("text".into()))
+                    );
+                    assert_eq!(read.body, note.body);
+                    saphyr::Yaml::load_from_str(split(&edited).unwrap().0).unwrap();
+                    if newline == "\r\n" {
+                        assert!(!edited.replace("\r\n", "").contains('\n'));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tag_alias_updates_detach_only_the_edited_reference() {
+        for newline in ["\n", "\r\n"] {
+            for tags in [vec!["papercut".into()], vec!["resolved".into()], vec![]] {
+                let original = source().replace("---\nBody", "shared: &tag_list [papercut]\ntags: *tag_list # alias comment\nother: *tag_list\n---\nBody").trim_end_matches('\n').replace('\n', newline);
+                let mut note =
+                    parse_note(&original, &format!("notes/{ID}.md"), Visibility::Public).unwrap();
+                note.tags = tags;
+                let patch = UpdateNote {
+                    tags: Some(note.tags.clone()),
+                    ..UpdateNote::default()
+                };
+                let edited = patch_note(&original, &note, &patch).unwrap();
+                let read = parse_note(&edited, &note.path, Visibility::Public).unwrap();
+                assert_eq!(read.tags, note.tags);
+                assert_eq!(read.metadata, note.metadata);
+                assert_eq!(read.body, note.body);
+                assert!(edited.contains("shared: &tag_list [papercut]"));
+                assert!(edited.contains("other: *tag_list"));
+                assert!(edited.contains("# alias comment"));
+                assert_eq!(
+                    edited.contains("tags: *tag_list"),
+                    note.tags == ["papercut"]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cleared_scalar_content_is_not_restored_as_a_comment() {
+        for hint in [
+            "\"hash # scalar content\"",
+            "|- # hint header\n  # scalar content",
+        ] {
+            let original =
+                source().replace("---\nBody", &format!("body_format: {hint}\n---\nBody"));
+            let note =
+                parse_note(&original, &format!("notes/{ID}.md"), Visibility::Public).unwrap();
+            let edited = patch_note(
+                &original,
+                &note,
+                &UpdateNote {
+                    clear_body_format: true,
+                    ..UpdateNote::default()
+                },
+            )
+            .unwrap();
+            assert!(!edited.contains("# scalar content"), "{edited}");
+            assert_eq!(edited.contains("# hint header"), hint.starts_with('|'));
+        }
+    }
+
+    #[test]
+    fn tag_updates_remain_portable_yaml_and_preserve_source_context() {
+        use saphyr::{LoadableYamlNode, Yaml};
+
+        for newline in ["\n", "\r\n"] {
+            for tags in [
+                "tags: # keep tag heading\n  - papercut # keep tag comment\n",
+                "tags:\n- papercut # keep tag comment\n",
+                "tags: # keep tag heading\n  - papercut # keep tag comment\n  # keep between tags\n  - paperclip # keep second tag comment\n",
+                "tags:\n  - papercut # keep tag comment\n  - paperclip # keep tag comment\n",
+                "tags: [papercut] # keep tag heading\n",
+                "tags: [papercut, # keep between tags\n  paperclip] # keep tag heading\n",
+                "tags: [] # keep tag heading\n",
+                "",
+            ] {
+                for updated_tags in [vec!["papercut", "resolved"], vec!["null", "true"], vec![]] {
+                    let original = source()
+                        .replace(
+                            "---\nBody",
+                            &format!(
+                                "{tags}status: active # keep status\nextra:\n  nested: [one, two] # keep metadata\n---\nBody"
+                            ),
+                        )
+                        .replace('\n', newline);
+                    let mut note = parse_note(
+                        &original,
+                        &format!("private/notes/{ID}.md"),
+                        Visibility::Private,
+                    )
+                    .unwrap();
+                    note.tags = updated_tags.iter().map(|tag| (*tag).into()).collect();
+                    note.status = NoteStatus::Archived;
+                    let patch = UpdateNote {
+                        tags: Some(note.tags.clone()),
+                        status: Some(note.status),
+                        ..UpdateNote::default()
+                    };
+                    let edited = patch_note(&original, &note, &patch).unwrap();
+                    let (header, _) = split(&edited).unwrap();
+                    let (old_header, _) = split(&original).unwrap();
+                    let comments = |text: &str| {
+                        let mut values: Vec<_> = noyalib::load_comments(text)
+                            .unwrap()
+                            .into_iter()
+                            .map(|comment| comment.text)
+                            .collect();
+                        values.sort();
+                        values
+                    };
+                    assert_eq!(comments(header), comments(old_header));
+                    let docs = Yaml::load_from_str(header)
+                        .unwrap_or_else(|error| panic!("Nonportable YAML: {error}\n{edited}"));
+                    let values: Vec<_> = docs[0]["tags"]
+                        .as_sequence()
+                        .unwrap()
+                        .iter()
+                        .map(|value| value.as_str().unwrap())
+                        .collect();
+                    assert_eq!(values, updated_tags);
+                    assert_eq!(docs[0]["status"].as_str(), Some("archived"));
+                    let read = parse_note(&edited, &note.path, Visibility::Private).unwrap();
+                    assert_eq!(read.metadata, note.metadata);
+                    assert_eq!(read.body, note.body);
+                    assert_eq!(read.visibility, Visibility::Private);
+                    for comment in [
+                        "# keep tag heading",
+                        "# keep tag comment",
+                        "# keep between tags",
+                        "# keep second tag comment",
+                        "# keep status",
+                        "# keep metadata",
+                    ] {
+                        if original.contains(comment) {
+                            assert!(edited.contains(comment), "Lost {comment}: {edited}");
+                        }
+                    }
+                    if newline == "\r\n" {
+                        assert!(!edited.replace("\r\n", "").contains('\n'));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_unindented_flow_tags_require_explicit_migration() {
+        use saphyr::{LoadableYamlNode, Yaml};
+
+        for newline in ["\n", "\r\n"] {
+            for tags in ["[\"papercut\",\"resolved\"]", "[]"] {
+                let original = source()
+                    .replace("---\nBody", &format!("tags:\n{tags}\nstatus: active\nextra: {{nested: [1, 2]}} # retain\n---\nBody"))
+                    .replace('\n', newline);
+                let note =
+                    parse_note(&original, &format!("notes/{ID}.md"), Visibility::Public).unwrap();
+                let patch = UpdateNote {
+                    body: Some("Updated body\n".into()),
+                    ..UpdateNote::default()
+                };
+                assert_eq!(
+                    patch_note(&original, &note, &patch).unwrap_err().code,
+                    "invalid_document"
+                );
+                let migrated = migrate_note_v1alpha3(&original).unwrap();
+                assert_eq!(migrate_note_v1alpha3(&migrated).unwrap(), migrated);
+                let read = parse_note_for_version(
+                    &migrated,
+                    &note.path,
+                    Visibility::Public,
+                    crate::version::DataVersion::V1Alpha3,
+                )
+                .unwrap();
+                assert_eq!(read.body, note.body);
+                assert_eq!(read.updated_at, note.updated_at);
+                assert_ne!(read.revision, note.revision);
+                let edited = patch_note(&migrated, &read, &patch).unwrap();
+                let (header, _) = split(&edited).unwrap();
+                assert!(Yaml::load_from_str(header).is_ok(), "{edited}");
+                let read = parse_note(&edited, &note.path, Visibility::Public).unwrap();
+                assert_eq!(read.tags, note.tags);
+                assert_eq!(read.status, note.status);
+                assert_eq!(read.metadata, note.metadata);
+                assert!(edited.contains("# retain"));
+                assert_eq!(read.body, format!("Updated body{newline}"));
             }
         }
     }
