@@ -67,6 +67,9 @@ agent guidance.
   write logs to stderr so stdout remains a clean MCP transport.
 - Document public APIs, including errors and observable side effects.
 - Use idiomatic Rust with typed errors. Prefer composition and straightforward functions.
+- Check the pinned library's documented APIs and default features before adding
+  custom parsing, serialization, or editing code. Prefer its supported operations;
+  keep workarounds limited to reproduced gaps, with regression tests and a short explanation.
 - Test behavior and meaningful failure paths, especially privacy, publishing,
   concurrency, and source/index consistency. Avoid unsafe code.
 - Before completion or a commit, run `cargo fmt --all`,

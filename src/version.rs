@@ -20,14 +20,16 @@ pub enum DataVersion {
     V1Alpha1,
     /// Explicit repository-wide version marker; Markdown layout is unchanged.
     V1Alpha2,
+    /// Explicit migration repairs legacy YAML tag indentation without changing values.
+    V1Alpha3,
 }
 
 /// Version used when the shared configuration has no `data_version` field.
 pub const LEGACY: DataVersion = DataVersion::V1Alpha1;
 /// Version written by new stores and the target of an explicit upgrade.
-pub const CURRENT: DataVersion = DataVersion::V1Alpha2;
+pub const CURRENT: DataVersion = DataVersion::V1Alpha3;
 /// All readable and writable data versions, in migration order.
-pub const SUPPORTED: [DataVersion; 2] = [LEGACY, CURRENT];
+pub const SUPPORTED: [DataVersion; 3] = [LEGACY, DataVersion::V1Alpha2, CURRENT];
 
 impl DataVersion {
     /// Stable spelling used in TOML, JSON, and notices.
@@ -35,6 +37,7 @@ impl DataVersion {
         match self {
             Self::V1Alpha1 => "v1alpha1",
             Self::V1Alpha2 => "v1alpha2",
+            Self::V1Alpha3 => "v1alpha3",
         }
     }
 
@@ -43,12 +46,20 @@ impl DataVersion {
         self != CURRENT
     }
 
+    /// Whether note readers enforce the representation established by v1alpha3.
+    pub(crate) const fn requires_valid_tag_indentation(self) -> bool {
+        match self {
+            Self::V1Alpha1 | Self::V1Alpha2 => false,
+            Self::V1Alpha3 => true,
+        }
+    }
+
     /// Whether ordinary operations can safely read and preserve this representation.
-    /// Both registered versions remain usable. Future upgrade-only versions must
+    /// All registered versions remain usable. Future upgrade-only versions must
     /// return false here and supply a fail-closed migration before registration.
     pub const fn usable(self) -> bool {
         match self {
-            Self::V1Alpha1 | Self::V1Alpha2 => true,
+            Self::V1Alpha1 | Self::V1Alpha2 | Self::V1Alpha3 => true,
         }
     }
 }
@@ -198,13 +209,20 @@ pub(crate) struct Migration {
     transform: fn(&str, &str) -> Result<String>,
 }
 
-// Each step changes only the shared version field. Future data changes belong
-// in explicit steps here rather than in initialization or cache recovery.
-const MIGRATIONS: &[Migration] = &[Migration {
-    source: LEGACY.as_str(),
-    target: CURRENT.as_str(),
-    transform: migrate_marker,
-}];
+// Source transformations run at their registered target in Store's migration
+// preparation. No initialization, ordinary edit, or cache recovery runs them.
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        source: LEGACY.as_str(),
+        target: DataVersion::V1Alpha2.as_str(),
+        transform: migrate_marker,
+    },
+    Migration {
+        source: DataVersion::V1Alpha2.as_str(),
+        target: CURRENT.as_str(),
+        transform: migrate_marker,
+    },
+];
 
 #[cfg(test)]
 fn migrate(text: &str, source: DataVersion) -> Result<String> {
@@ -316,7 +334,7 @@ mod tests {
                 version
             );
         }
-        assert!("v1alpha3".parse::<DataVersion>().is_err());
+        assert!("v1alpha4".parse::<DataVersion>().is_err());
         assert_eq!(MIGRATIONS.len(), SUPPORTED.len() - 1);
         for (step, pair) in MIGRATIONS.iter().zip(SUPPORTED.windows(2)) {
             assert_eq!(step.source, pair[0].as_str());
@@ -329,14 +347,14 @@ mod tests {
         let text = "# Team\r\nformat_version=1\ndata_version  = 'v1alpha1'  # comment\r\n[tags]\nprivate_patterns = [\r\n  'local-*', # keep\n]\r\n";
         assert_eq!(
             migrate(text, LEGACY).unwrap(),
-            text.replace("'v1alpha1'", "\"v1alpha2\"")
+            text.replace("'v1alpha1'", "\"v1alpha3\"")
         );
         assert!(migrate("invalid = [", LEGACY).is_err());
         let original = "\u{feff}# Team\r\nformat_version = 1\r\n";
         let migrated = migrate(original, LEGACY).unwrap();
         assert_eq!(
             migrated,
-            "\u{feff}data_version = \"v1alpha2\"\r\n# Team\r\nformat_version = 1\r\n"
+            "\u{feff}data_version = \"v1alpha3\"\r\n# Team\r\nformat_version = 1\r\n"
         );
         assert_eq!(
             toml::from_str::<toml::Value>(&migrated).unwrap()["data_version"].as_str(),

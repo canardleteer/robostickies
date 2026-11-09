@@ -5,11 +5,11 @@ repository's data version. It covers both namespaces. New stores write:
 
 ```toml
 format_version = 1
-data_version = "v1alpha2"
+data_version = "v1alpha3"
 ```
 
-An absent `data_version` means `v1alpha1`. Both versions remain readable and
-writable. Installing, opening, or initializing an existing store never migrates
+An absent `data_version` means `v1alpha1`. All three versions remain readable and
+writable for valid sources. Installing, opening, or initializing an existing store never migrates
 it silently. Optional body hints use existing additional metadata and require
 neither a version bump nor a bulk rewrite.
 
@@ -32,7 +32,7 @@ guidance directs agents to report applicable recommendations and offer explicit
 preview, upgrade, or deferral choices. A saved optional deferral suppresses the
 reminder; it does not change the source version or requirement.
 
-An already-current `v1alpha2` store needs no migration when the executable is
+An already-current `v1alpha3` store needs no migration when the executable is
 updated. Initialization is the appropriate action for an absent store. Rebuild
 the cache when diagnostics or recovery require it, rather than after every install.
 
@@ -40,7 +40,7 @@ Store migration and executable installation are separate operations. Running MCP
 processes retain their compiled build. Verify installed changes with a newly
 started server; restart an older server before using it for changed behavior.
 
-Both representations registered in this RC are safely usable. A future
+All representations registered in this development baseline are safely usable. A future
 upgrade-only representation must declare its safety boundary and migration.
 Unsupported newer formats require compatible newer tooling: they are never
 reinterpreted as legacy or downgraded.
@@ -92,8 +92,9 @@ migration and source validation remove the snapshot unless `keep_snapshot` was
 requested. A snapshot failure leaves authoritative data unchanged; partial copies
 are reported as incomplete or unverified and retained for inspection. Migration or
 validation failure stops and retains the recovery copy; errors report its path.
-There is no automatic rollback. Inspect that copy and the reported error before
-manually restoring authoritative files under the operation lock. If cleanup
+A failed write or final validation restores the migration's own replacements when
+possible. Recovery never overwrites an intervening direct-editor change. If recovery
+is incomplete, inspect the retained snapshot and error before proceeding. If cleanup
 fails, migration remains successful and reports a retained-snapshot warning.
 
 Migrations run in registered order and validate every step under the existing
@@ -101,12 +102,23 @@ operation lock, without reacquiring it. Authoritative source validation does not
 open or repair redb; cache damage cannot decide migration success. Repair the
 disposable cache separately with `reindex`.
 
-The existing `v1alpha1` → `v1alpha2` step changes only the shared version marker
-through atomic configuration replacement. It preserves other configuration
-bytes, note/tag bytes, IDs, privacy, revisions, custom metadata, comments, newline
-conventions, customized guidance, and agent files. This RC introduces no
-multi-file data-format migration. Future incompatible transformations must
-provide fail-closed recovery before registration.
+The `v1alpha1` → `v1alpha2` bootstrap step adds the shared version marker.
+The `v1alpha2` → `v1alpha3` step repairs flow tag lists written at column zero
+by older writers. Only missing indentation changes; IDs, timestamps, tag values,
+privacy, metadata, comments, body bytes, delimiters, and newline conventions are
+preserved. Already-valid files and customized guidance remain byte-identical.
+The revision changes for each repaired file, so re-read it before the next edit.
+
+The upgrade prepares and validates all replacements before writing. It writes
+notes first and commits the shared version marker last. An interruption before
+that commit leaves the older version selected; retry the explicit upgrade to
+finish the remaining idempotent repairs. Cache contents do not participate.
+
+Ordinary edits never perform this migration. Legacy malformed files remain
+readable for inspection, but edits reject them until an explicit upgrade or
+source correction. `v1alpha3` readers also reject that malformed representation,
+including when an older cached parse exists. Installing or initializing the
+application does not upgrade an existing store.
 
 User configuration and `private/config.toml` cannot set `data_version`, even to
 the shared value. Public reads validate only the shared configuration; local
@@ -142,7 +154,7 @@ reject that setting; this does not require a repository data migration.
 ## Data version policy
 
 `data_version` identifies how authoritative repository data is interpreted and
-safely preserved. The current value is `v1alpha2`. Change it when existing stored
+safely preserved. The current value is `v1alpha3`. Change it when existing stored
 sources need migration, or readers and writers for the current version cannot
 safely interpret and preserve the new representation, including:
 
@@ -158,14 +170,20 @@ Do not change it for:
 - Optional metadata with safe defaults that remains losslessly preserved.
 - New commands, queries, MCP responses, or features that leave stored contracts
   intact.
-- Bug fixes restoring documented behavior, documentation changes, or cache and
-  index generations.
+- Writer fixes that make new output conform to the existing contract without
+  transforming existing sources, documentation changes, or cache generations.
 - A package release by itself.
 
-The existing `v1alpha1` → `v1alpha2` bootstrap migration introduces the shared
-version marker without changing the note or tag representation. Future changes
-follow the policy above. Version declarations stay centralized in `src/version.rs`.
-A stored-data boundary change requires an ordered migration and regression tests
-that verify preservation of authoritative sources and privacy across versions.
+Classify a change by its effect on stored data, even when it is called a bug fix.
+A change that rewrites or reinterprets existing authoritative sources requires a
+new data version and an explicit ordered migration. It must not be hidden inside
+an unrelated edit, initialization, or cache recovery. Output corrections within
+an explicitly requested edit can retain the version when the stored contract is
+unchanged.
+
+Version declarations stay centralized in `src/version.rs`. Every stored-data
+boundary change requires preservation, privacy, failure-recovery, preview, and
+idempotence tests across supported source versions. The current development
+baseline is `0.3.0-rc.1`; declaring it does not publish a release.
 
 [All usage guides](README.md).

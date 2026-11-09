@@ -179,6 +179,55 @@ fn legacy_collisions_and_unrelated_metadata_survive_edits_in_both_newline_styles
 }
 
 #[test]
+fn clearing_hints_retains_comments_without_turning_scalar_data_into_comments() {
+    for newline in ["\n", "\r\n"] {
+        for hint in [
+            "'hash # scalar data' # inline hint",
+            "|- # scalar header\n  # scalar data",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Store::with_user_config(temp.path(), None).unwrap();
+            store.init(InitOptions::default()).unwrap();
+            let note = create(&store, None);
+            let path = store.directory().join(&note.path);
+            let original = fs::read_to_string(&path)
+                .unwrap()
+                .replacen(
+                    "---\n",
+                    &format!("---\n# hint heading\nbody_format: {hint}\n"),
+                    1,
+                )
+                .trim_end_matches('\n')
+                .replace('\n', newline);
+            fs::write(&path, &original).unwrap();
+            let note = store.get_note(&note.id).unwrap();
+            let cleared = store
+                .update_note(UpdateNote {
+                    clear_body_format: true,
+                    ..patch(&note)
+                })
+                .unwrap()
+                .note;
+            let edited = fs::read_to_string(&path).unwrap();
+            assert!(cleared.metadata.is_empty());
+            assert!(!edited.contains("scalar data"));
+            for comment in ["# hint heading", "# inline hint", "# scalar header"] {
+                assert_eq!(
+                    edited.matches(comment).count(),
+                    original.matches(comment).count()
+                );
+            }
+            assert_eq!(cleared.body, note.body);
+            assert_eq!(cleared.visibility, Visibility::Private);
+            assert_eq!(store.get_note(&note.id).unwrap().revision, cleared.revision);
+            if newline == "\r\n" {
+                assert!(!edited.replace("\r\n", "").contains('\n'));
+            }
+        }
+    }
+}
+
+#[test]
 fn publication_strips_the_source_hint_and_accepts_only_an_explicit_public_hint() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::with_user_config(temp.path(), None).unwrap();

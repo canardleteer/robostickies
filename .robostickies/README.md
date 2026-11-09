@@ -70,6 +70,16 @@ contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
 or plain text. Optional `body_format` metadata is advisory and never interprets
 the body. Additional metadata is retained when editing. The files are authoritative; the redb index is disposable.
 
+Legacy YAML repairs run only through an explicit store upgrade. Ordinary edits
+reject malformed legacy frontmatter instead of silently migrating it. Preview an
+older store's upgrade or correct the source before editing.
+After upgrading, read notes again before editing; repaired files have new revisions.
+
+YAML edits preserve comments. Comments displaced by replacing or clearing a value
+are retained at the end of the frontmatter, before its closing `---`. When working
+on that frontmatter, review displaced comments: relocate or remove them when their
+intent is clear, and ask the user when it is uncertain.
+
 Edits, archive/unarchive, and publishing (including previews) require the revision
 from the last successful read or save. Use CLI `--if-match` or MCP
 `expected_revision`. Missing or blank revisions are rejected. A stale revision

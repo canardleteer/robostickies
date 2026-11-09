@@ -11,6 +11,7 @@ pub mod config;
 mod document;
 mod index;
 pub mod mcp;
+mod migration;
 pub mod model;
 mod snapshot;
 pub mod store;

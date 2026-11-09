@@ -58,7 +58,7 @@ to use it without adding tracked integration files.
 - [Notes and tags](docs/usage/getting-started.md#notes-and-tags) capture friction
   and useful successes, with custom tags and startup guidance.
 - [Markdown storage](docs/usage/storage.md) keeps notes in editable files that
-  can be shared and tracked in Git.
+  can be shared and tracked in Git, preserving YAML metadata and comments during edits.
 - [Body hints](docs/usage/getting-started.md#bodies-and-optional-format-hints)
   describe nonempty UTF-8 text with optional advisory metadata.
 - [Private notes and publishing](docs/usage/privacy-and-configuration.md#private-notes-and-publication)
@@ -78,7 +78,7 @@ to use it without adding tracked integration files.
   sources and Git privacy protections, and rebuild the disposable index.
 - [Store versions and upgrades](docs/usage/upgrades.md) report legacy formats
   with structured advice and optional deferral, and migrate explicitly with
-  verified private recovery snapshots.
+  verified private recovery snapshots, including versioned YAML repairs.
 - [Development tasks](docs/usage/development.md) provide workspace checks,
   unused-dependency checks, coverage reports, and profiling against synthetic notes.
 

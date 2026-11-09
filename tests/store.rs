@@ -415,6 +415,49 @@ fn edits_preserve_frontmatter_comments_metadata_and_detect_stale_revisions() {
 }
 
 #[test]
+fn alias_backed_tag_edits_preserve_metadata_and_move_private_sources_safely() {
+    for newline in ["\n", "\r\n"] {
+        let (_temp, store) = fresh();
+        tag(&store, "local", true);
+        let source = note(&store, "Alias fixture", &[]);
+        let path = store.directory().join(&source.path);
+        let text = format!("---\nid: {}\ncreated_at: '{}'\nupdated_at: '{}'\nshared: &tag_list [papercut]\ntags: *tag_list # alias comment\nother: *tag_list\n---\nAlias fixture\n",source.id,source.created_at,source.updated_at).replace('\n',newline);
+        fs::write(&path, &text).unwrap();
+        let source = store.get_note(&source.id).unwrap();
+        let updated = store
+            .update_note(UpdateNote {
+                id: source.id.clone(),
+                expected_revision: source.revision.clone(),
+                tags: Some(vec!["private:local".into()]),
+                ..UpdateNote::default()
+            })
+            .unwrap()
+            .note;
+        assert_eq!(updated.visibility, Visibility::Private);
+        assert_eq!(updated.metadata, source.metadata);
+        assert!(!path.exists());
+        let private_path = store.directory().join(&updated.path);
+        let edited = fs::read_to_string(&private_path).unwrap();
+        assert!(edited.contains("shared: &tag_list [papercut]"));
+        assert!(edited.contains("other: *tag_list"));
+        assert!(edited.contains("# alias comment"));
+        assert_eq!(
+            store
+                .update_note(UpdateNote {
+                    id: source.id,
+                    expected_revision: source.revision,
+                    tags: Some(vec![]),
+                    ..UpdateNote::default()
+                })
+                .unwrap_err()
+                .code,
+            "conflict"
+        );
+        assert_eq!(fs::read_to_string(private_path).unwrap(), edited);
+    }
+}
+
+#[test]
 fn private_routing_on_edit_never_publishes_implicitly() {
     let (_temp, store) = fresh();
     tag(&store, "local", true);

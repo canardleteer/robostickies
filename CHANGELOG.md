@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — 0.3.0-rc.1 development baseline
+
+- Use noyalib typed CST edits, retain displaced YAML comments, and preserve
+  body bytes during frontmatter-only edits.
+- Add the explicit `v1alpha2` → `v1alpha3` migration for malformed tag-list
+  indentation, with previews, recovery snapshots, and source-preservation checks.
+- Clarify when stored-data repairs require a versioned migration.
+
+This is a development baseline; no release is published by this change.
+
 ## [0.2.0](https://github.com/canardleteer/robostickies/compare/v0.2.0-rc.2...v0.2.0) - 2026-11-04
 
 - Promote the validated 0.2.0-rc.2 to stable without application code changes.

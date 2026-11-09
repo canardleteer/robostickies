@@ -15,7 +15,7 @@ tempfile = "3"
 
 [package]
 name = "robostickies"
-version = "0.2.0"
+version = "0.3.0-rc.1"
 edition.workspace = true
 rust-version.workspace = true
 description = "Small repository-local notes for humans and agents, through CLI and MCP"
@@ -64,6 +64,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
+# Independent YAML parser catches source accepted by the production parser.
+saphyr = "=0.0.6"
 insta = { version = "1.49.0", default-features = false, features = ["json"] }
 rmcp = { version = "3.7", default-features = false, features = ["client", "transport-child-process"] }
 

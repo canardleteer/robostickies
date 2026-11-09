@@ -317,6 +317,10 @@ struct Catalog {
 /// Validate authoritative sources without opening or repairing the disposable cache.
 /// Caller must already hold the operation lock.
 pub(crate) fn validate_sources(root: &Path) -> crate::Result<()> {
+    validated_notes(root).map(|_| ())
+}
+
+pub(crate) fn validated_notes(root: &Path) -> crate::Result<Vec<Note>> {
     let catalog = read_sources(root, &BTreeMap::new())
         .map_err(|error| Error::new("io", error.to_string()))?;
     if !catalog.diagnostics.is_empty() {
@@ -325,7 +329,7 @@ pub(crate) fn validate_sources(root: &Path) -> crate::Result<()> {
             "Authoritative source validation failed; run robostickies doctor for local diagnostics",
         ));
     }
-    Ok(())
+    Ok(catalog.notes.into_values().collect())
 }
 
 fn read_sources(root: &Path, old: &BTreeMap<String, Source>) -> anyhow::Result<Catalog> {
@@ -432,6 +436,7 @@ fn scan(
     sources: &mut BTreeMap<String, Source>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
+    let version = crate::config::load_shared(root)?.data_version;
     if let Err(error) = document::safe_path(root, Path::new(directory)) {
         diagnostics.push(Diagnostic {
             path: directory.into(),
@@ -473,7 +478,8 @@ fn scan(
         };
         let source = match text {
             Ok(text) => {
-                let fingerprint = document::fingerprint(&text);
+                // A version change must revalidate cached source interpretations.
+                let fingerprint = format!("{version}:{}", document::fingerprint(&text));
                 if let Some(cached) = old
                     .get(&path)
                     .filter(|cached| cached.fingerprint == fingerprint)
@@ -493,7 +499,8 @@ fn scan(
                     );
                     document::parse_tag(&text, &name).map(Entity::Tag)
                 } else {
-                    document::parse_note(&text, &path, visibility).map(Entity::Note)
+                    document::parse_note_for_version(&text, &path, visibility, version)
+                        .map(Entity::Note)
                 };
                 match parsed {
                     Ok(entity) => Source {

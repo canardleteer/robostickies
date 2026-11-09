@@ -107,7 +107,8 @@ impl StickyServer {
 
     /// Explicitly upgrade the shared store data version for both namespaces.
     /// Set dry_run=true to preview, defer=true to decline the optional target, or
-    /// keep_snapshot=true to retain recovery data. Notes and customized guidance are preserved.
+    /// keep_snapshot=true to retain recovery data. Note values and customized guidance
+    /// are preserved; repaired sources receive new revisions. Re-read before editing.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::version::UpgradeResult>(), annotations(destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn upgrade_store(&self, Parameters(input): Parameters<UpgradeOptions>) -> CallToolResult {
         self.execute(move |store| store.upgrade_with_options(input))

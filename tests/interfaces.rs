@@ -707,8 +707,12 @@ async fn startup_discovery_directs_agents_to_advice_independently_of_health() {
         call_mcp(&client, "init_store", json!({})).await;
         let config = temp.path().join(".robostickies/config.toml");
         let original = fs::read_to_string(&config).unwrap();
-        for (source, requirement) in [("v1alpha1", "should"), ("v1alpha2", "none")] {
-            fs::write(&config, original.replace("v1alpha2", source)).unwrap();
+        for (source, requirement) in [
+            ("v1alpha1", "should"),
+            ("v1alpha2", "should"),
+            ("v1alpha3", "none"),
+        ] {
+            fs::write(&config, original.replace("v1alpha3", source)).unwrap();
             let context = call_mcp(&client, "get_context", json!({})).await;
             let health = call_mcp(&client, "validate_store", json!({})).await;
             assert_eq!(health["healthy"], true);
@@ -789,6 +793,114 @@ async fn mcp_edits_crlf_nested_frontmatter_and_publishes_a_clean_copy() {
         }
         client.cancel().await.unwrap();
     }).await.expect("MCP frontmatter test timed out");
+}
+
+#[tokio::test]
+async fn yaml_edits_keep_comments_and_values_through_cli_and_mcp() {
+    use saphyr::{LoadableYamlNode, Yaml};
+
+    tokio::time::timeout(Duration::from_secs(120), async {
+        let temp = tempfile::tempdir().unwrap();
+        let client = start_mcp(temp.path()).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let context = call_mcp(&client, "get_context", json!({})).await;
+        let guidance = context["guidance"].as_str().unwrap();
+        for phrase in ["Comments displaced", "end of the frontmatter", "relocate or remove", "ask the user"] {
+            assert!(guidance.contains(phrase));
+        }
+        assert_eq!(resource_mcp(&client, "robostickies://guidance").await["guidance"], context["guidance"]);
+        let directory = temp.path().join(".robostickies");
+        assert_eq!(fs::read_to_string(directory.join("README.md")).unwrap(), guidance);
+        assert_eq!(cli(temp.path(), &["context"]).await["guidance"], context["guidance"]);
+        for newline in ["\n", "\r\n"] {
+            for mcp in [false, true] {
+                for fields in [
+                    "",
+                    "tags: [papercut] # tag heading\n",
+                    "tags: # tag heading\n  - papercut #duplicate\n  - paperclip #duplicate\n",
+                    "tags:\n- papercut # tag heading\n",
+                    "tags:\n[\"papercut\"] # tag heading\n",
+                    "tags:\n[] # tag heading\n",
+                    "shared: &tag_list [papercut]\ntags: *tag_list # tag heading\nother: *tag_list\n",
+                ] {
+                    let created = call_mcp(&client,"create_note",json!({"body":"Original YAML fixture","private":true})).await["note"].clone();
+                    let id = created["id"].as_str().unwrap();
+                    let path = directory.join(created["path"].as_str().unwrap());
+                    let optional = if fields.is_empty() { "" } else {
+                        "status: >- # status header\n  active\n# hint heading\nbody_format: |- # hint header\n  markdown\n"
+                    };
+                    let original = format!("---\nid: {id}\ncreated_at: '{}'\nupdated_at: |- # timestamp header\n  {}\n{fields}{optional}custom:\n  nested: [one, two] # nested comment\n  literal: |\n    # literal data\n---\nOriginal YAML fixture",created["created_at"].as_str().unwrap(),created["updated_at"].as_str().unwrap()).replace('\n',newline);
+                    fs::write(&path,&original).unwrap();
+                    if fields.starts_with("tags:\n[") {
+                        // Legacy encodings are repaired only by the explicit upgrade.
+                        let config = directory.join("config.toml");
+                        fs::write(&config, fs::read_to_string(&config).unwrap().replace("v1alpha3", "v1alpha2")).unwrap();
+                        let legacy = call_mcp(&client,"get_note",json!({"id":id})).await;
+                        assert_eq!(error_mcp(&client,"update_note",json!({"id":id,"expected_revision":legacy["revision"],"body":"No implicit repair"})).await["error"]["code"],"invalid_document");
+                        for dry in [true, false] {
+                            if mcp {
+                                call_mcp(&client,"upgrade_store",json!({"dry_run":dry})).await;
+                            } else {
+                                let args = if dry {vec!["upgrade","--dry-run"]} else {vec!["upgrade"]};
+                                cli(temp.path(),&args).await;
+                            }
+                            if dry {assert_eq!(fs::read_to_string(&path).unwrap(),original);}
+                        }
+                    }
+                    let before = call_mcp(&client,"get_note",json!({"id":id})).await;
+                    let mut current = before.clone();
+                    for step in 0..5 {
+                        let revision = current["revision"].as_str().unwrap();
+                        current = if mcp {
+                            let mut args = json!({"id":id,"expected_revision":revision});
+                            args.as_object_mut().unwrap().extend(match step {
+                                0 => json!({"tags":["resolved","paperclip"],"body_format":"text"}),
+                                1 => json!({"status":"archived"}),
+                                2 => json!({"tags":[],"clear_body_format":true}),
+                                3 => json!({"status":"active"}),
+                                _ => json!({"body":"Changed YAML fixture"}),
+                            }.as_object().unwrap().clone());
+                            call_mcp(&client,"update_note",args).await["note"].clone()
+                        } else {
+                            let mut args = vec!["update",id,"--if-match",revision];
+                            match step {
+                                0 => args.extend(["--tag","resolved","--tag","paperclip","--body-format","text"]),
+                                1 => {args = vec!["archive",id,"--if-match",revision];},
+                                2 => args.extend(["--clear-tags","--clear-body-format"]),
+                                3 => {args = vec!["unarchive",id,"--if-match",revision];},
+                                _ => args.extend(["Changed YAML fixture"]),
+                            }
+                            cli(temp.path(),&args).await["note"].clone()
+                        };
+                        let edited = fs::read_to_string(&path).unwrap();
+                        for comment in ["# timestamp header","# tag heading","#duplicate","# status header","# hint heading","# hint header","# nested comment","# literal data"] {
+                            assert_eq!(edited.matches(comment).count(),original.matches(comment).count(),"mcp={mcp}, step={step}: {edited}");
+                        }
+                        let normalized = edited.replace("\r\n","\n");
+                        let header = normalized.strip_prefix("---\n").unwrap().split_once("\n---\n").unwrap().0;
+                        let docs = Yaml::load_from_str(header).unwrap();
+                        assert_eq!(docs[0]["id"].as_str(),Some(id));
+                        let tags:Vec<_> = docs[0]["tags"].as_sequence().unwrap().iter().map(|v|v.as_str().unwrap()).collect();
+                        assert_eq!(tags,if step<=1 {vec!["paperclip","resolved"]} else {vec![]});
+                        assert_eq!(current["metadata"].get("body_format").cloned(), (step <= 1).then(|| json!("text")));
+                        assert_eq!(current["status"],if step==1 || step==2 {"archived"} else {"active"});
+                        assert_eq!(current["metadata"]["custom"],before["metadata"]["custom"]);
+                        assert_eq!(current["metadata"].get("shared"),before["metadata"].get("shared"));
+                        assert_eq!(current["metadata"].get("other"),before["metadata"].get("other"));
+                        assert_eq!(current["body"],if step<4 {"Original YAML fixture".to_owned()} else {format!("Changed YAML fixture{newline}")});
+                        assert_eq!(current["visibility"],"private");
+                        assert_eq!(current["created_at"],before["created_at"]);
+                        assert_eq!(call_mcp(&client,"get_note",json!({"id":id})).await,current);
+                        if newline=="\r\n" {assert!(!edited.replace("\r\n","").contains('\n'));}
+                    }
+                    let bytes = fs::read(&path).unwrap();
+                    assert_eq!(error_mcp(&client,"update_note",json!({"id":id,"expected_revision":before["revision"],"tags":[]})).await["error"]["code"],"conflict");
+                    assert_eq!(fs::read(&path).unwrap(),bytes);
+                }
+            }
+        }
+        client.cancel().await.unwrap();
+    }).await.expect("YAML edit interoperation timed out");
 }
 
 #[tokio::test]
@@ -1420,7 +1532,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let client = start_mcp(temp.path()).await;
         assert_eq!(error_mcp(&client, "upgrade_store", json!({})).await["error"]["code"], "not_initialized");
         call_mcp(&client, "init_store", json!({})).await;
-        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha2");
+        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha3");
         let config = temp.path().join(".robostickies/config.toml");
         let legacy = "\u{feff}# Preserve team settings\nformat_version = 1\n\n[tags]\ndefault_private = false\n";
         fs::write(&config, legacy).unwrap();
@@ -1452,7 +1564,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let original = fs::read(&path).unwrap();
         let preview = call_mcp(&client, "upgrade_store", json!({"dry_run": true})).await;
         assert_eq!(preview["source_version"], "v1alpha1");
-        assert_eq!(preview["target_version"], "v1alpha2");
+        assert_eq!(preview["target_version"], "v1alpha3");
         assert_eq!(preview["wrote"], false);
         assert_eq!(preview["dry_run"], true);
         assert_eq!(preview["snapshot"], Value::Null);
@@ -1472,7 +1584,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         assert_eq!(call_mcp(&client, "get_note", json!({"id":id})).await["revision"], saved["note"]["revision"]);
         for name in ["get_context", "get_config", "validate_store"] {
             let value = call_mcp(&second, name, json!({})).await;
-            assert_eq!(value["data_version"], "v1alpha2");
+            assert_eq!(value["data_version"], "v1alpha3");
             assert_eq!(value["upgrade_available"], false);
         }
         let output = command(temp.path()).args(["config", "show"]).bounded_output().await.unwrap();
