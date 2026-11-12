@@ -7,6 +7,8 @@
 - Add the explicit `v1alpha2` → `v1alpha3` migration for malformed tag-list
   indentation, with previews, recovery snapshots, and source-preservation checks.
 - Clarify when stored-data repairs require a versioned migration.
+- Update YAML and TOML dependencies, adding TOML 1.1 configuration support.
+- Refresh MCP output schemas to match fields already serialized in responses.
 
 This is a development baseline; no release is published by this change.
 

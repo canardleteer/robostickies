@@ -64,8 +64,8 @@ to use it without adding tracked integration files.
 - [Private notes and publishing](docs/usage/privacy-and-configuration.md#private-notes-and-publication)
   keep local observations ignored and publish reviewed copies.
 - [Configuration](docs/usage/privacy-and-configuration.md#configuration) controls
-  privacy defaults by combining user settings with public and private repository
-  settings.
+  privacy defaults by combining TOML 1.1 user settings with public and private
+  repository settings.
 - [Search and review](docs/usage/search-and-review.md) filter notes and produce
   a complete review of every match.
 - [Shared editing](docs/usage/shared-editing.md) uses revision checks and file
