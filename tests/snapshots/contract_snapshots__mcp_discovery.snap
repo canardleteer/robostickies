@@ -303,6 +303,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "type": "array"
               }
             },
+            "required": [
+              "default_private",
+              "private_patterns"
+            ],
             "type": "object"
           },
           "UpgradeAdvice": {
@@ -395,7 +399,8 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           "upgrade",
           "warnings",
           "tags",
-          "sources"
+          "sources",
+          "user_config_path"
         ],
         "type": "object"
       }
@@ -480,7 +485,8 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               "upgrade",
               "warnings",
               "tags",
-              "sources"
+              "sources",
+              "user_config_path"
             ],
             "type": "object"
           },
@@ -581,6 +587,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "type": "array"
               }
             },
+            "required": [
+              "default_private",
+              "private_patterns"
+            ],
             "type": "object"
           },
           "TagSummary": {
@@ -737,7 +747,9 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         },
         "required": [
           "initialized",
+          "data_version",
           "upgrade_available",
+          "upgrade",
           "warnings",
           "guidance",
           "agents_md",
@@ -1203,6 +1215,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "required": [
           "notes",
           "total",
+          "next_cursor",
           "diagnostics"
         ],
         "type": "object"
@@ -2207,6 +2220,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           "dry_run",
           "deferred",
           "upgrade",
+          "snapshot",
           "warnings"
         ],
         "type": "object"

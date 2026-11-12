@@ -64,6 +64,9 @@ for observations that must stay out of public review.
 
 ## Configuration
 
+Configuration files use TOML 1.1, including multiline inline tables and trailing
+commas in inline tables.
+
 User configuration is `robostickies.toml` in the platform config directory:
 
 | Platform | Location |

@@ -4,7 +4,7 @@ use std::{fmt, str::FromStr};
 
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
-use toml_edit::ImDocument;
+use toml_edit::Document;
 
 use crate::{Error, Result};
 
@@ -297,7 +297,7 @@ fn run_migrations(
 }
 
 fn migrate_marker(text: &str, target: &str) -> Result<String> {
-    let document = ImDocument::parse(text)
+    let document = Document::parse(text)
         .map_err(|e| Error::new("configuration", format!("Invalid store config.toml: {e}")))?;
     let value = toml_edit::Value::from(target).to_string();
     // Use parser spans so unrelated bytes, including mixed line endings and
@@ -360,6 +360,25 @@ mod tests {
             toml::from_str::<toml::Value>(&migrated).unwrap()["data_version"].as_str(),
             Some(CURRENT.as_str())
         );
+    }
+
+    #[test]
+    fn toml_1_1_configuration_survives_version_marker_migration() {
+        for newline in ["\n", "\r\n"] {
+            let text = concat!(
+                "# Team configuration\n",
+                "format_version = 1\n",
+                "data_version = 'v1alpha1' # retain\n",
+                "tags = {\n",
+                "  default_private = true,\n",
+                "  private_patterns = ['local-*'], # retain pattern\n",
+                "}\n",
+            )
+            .replace('\n', newline);
+            let migrated = migrate(&text, LEGACY).unwrap();
+            assert_eq!(migrated, text.replace("'v1alpha1'", "\"v1alpha3\""));
+            crate::config::validate_migration(&migrated, CURRENT.as_str()).unwrap();
+        }
     }
 
     #[test]
