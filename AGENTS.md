@@ -11,8 +11,8 @@ Install this checkout with `cargo install --path . --locked` and use the CLI or
 installed MCP server while developing robostickies itself.
 
 At the start of work, run `robostickies context` or call MCP `get_context`.
-Read tag topics and the full guidance for startup tags, and confirm the selected
-repository in local context. Inspect upgrade advice and warnings even when health
+Read tag names, optional descriptions, and the full guidance for startup tags.
+Confirm the selected repository in local context. Inspect upgrade advice and warnings even when health
 is good. Confirm the running MCP build with `version`; the CLI version does not
 identify an existing MCP process. Record concrete friction with `papercut` and useful
 successes with `paperclip` while continuing the task. Publish a sanitized public

@@ -24,7 +24,7 @@ fn tag(store: &Store, name: &str, private: bool) -> Tag {
     store
         .create_tag(CreateTag {
             name: name.into(),
-            topic: format!("Topic {name}"),
+            description: Some(format!("Topic {name}")),
             body: "Detailed guidance".into(),
             read_on_start: false,
             private: Some(private),
@@ -137,7 +137,7 @@ fn configuration_patterns_precedence_and_scope_qualified_tags() {
     let store = Store::with_user_config(store.repository(), Some(user.clone())).unwrap();
     let create = |name: &str, private| CreateTag {
         name: name.into(),
-        topic: "A topic".into(),
+        description: Some("A topic".into()),
         body: String::new(),
         read_on_start: false,
         private,
@@ -1164,7 +1164,7 @@ fn invalid_paths_and_bodies_are_rejected_before_writes() {
         store
             .create_tag(CreateTag {
                 name: "../escape".into(),
-                topic: "bad".into(),
+                description: Some("bad".into()),
                 body: String::new(),
                 read_on_start: false,
                 private: None
@@ -1254,7 +1254,12 @@ fn initialization_backfills_outcome_definitions_without_overwriting_customizatio
         for name in ["resolved", "adopted"] {
             let definition = store.get_tag(&format!("{prefix}{name}")).unwrap();
             assert!(definition.read_on_start);
-            assert!(!definition.topic.is_empty());
+            assert!(
+                definition
+                    .description
+                    .as_ref()
+                    .is_some_and(|text| !text.is_empty())
+            );
             assert!(!definition.body.is_empty());
             if name == "resolved" {
                 assert!(definition.body.contains("user-confirmed restart"));
@@ -1272,7 +1277,7 @@ fn initialization_backfills_outcome_definitions_without_overwriting_customizatio
         for name in ["resolved", "adopted"] {
             fs::remove_file(store.directory().join(format!("{namespace}/{name}.md"))).unwrap();
         }
-        let custom = "---\ntopic: Team-specific resolution\nread_on_start: false\n---\nKeep this custom guidance.\n";
+        let custom = "---\ndescription: Team-specific resolution\nread_on_start: false\n---\nKeep this custom guidance.\n";
         // The definition in either namespace prevents init from adding the same bare name.
         let custom_path = store.directory().join("tags/resolved.md");
         fs::write(&custom_path, custom).unwrap();

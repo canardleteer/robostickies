@@ -11,8 +11,8 @@ behavior; keep run-specific results in the ignored private namespace.
 
 ## Start and record evidence
 
-Call `get_context` first. Read tag topics and full startup guidance, inspect
-configuration, and search existing observations before adding another. If needed,
+Call `get_context` first. Read tag names, optional descriptions, and full startup
+guidance, inspect configuration, and search existing observations before adding another. If needed,
 call `init_store(agents=false)` and verify its files appear in this checkout.
 Confirm `repository_root` in local context. Each MCP process keeps its startup
 repository selection; changing the agent's working directory does not retarget

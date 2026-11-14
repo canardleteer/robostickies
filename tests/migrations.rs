@@ -40,6 +40,17 @@ fn sources(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 fn write_config(store: &Store, version: Option<&str>) {
+    if !version.is_some_and(|value| value.contains("v1alpha4")) {
+        for directory in ["tags", "private/tags"] {
+            if let Ok(entries) = fs::read_dir(store.directory().join(directory)) {
+                for entry in entries {
+                    let path = entry.unwrap().path();
+                    let text = fs::read_to_string(&path).unwrap();
+                    fs::write(path, text.replacen("description:", "topic:", 1)).unwrap();
+                }
+            }
+        }
+    }
     let field = version
         .map(|v| format!("data_version = {v} # keep version comment\n"))
         .unwrap_or_default();
@@ -110,15 +121,25 @@ fn v1alpha3_repairs_only_versioned_sources_and_leaves_cache_values_and_unaffecte
             assert_eq!(sources(temp.path()), before);
             let preview = store.upgrade(true).unwrap();
             assert_eq!(preview.source_version.as_str(), "v1alpha2");
-            assert_eq!(preview.target_version.as_str(), "v1alpha3");
+            assert_eq!(preview.target_version.as_str(), "v1alpha4");
             assert!(preview.dry_run && !preview.wrote && preview.snapshot.is_none());
             assert_eq!(sources(temp.path()), before);
             assert_eq!(fs::read(&index).ok(), cache_before);
             let mut expected = before.clone();
+            for (path, bytes) in &mut expected {
+                if path.starts_with(".robostickies/tags")
+                    || path.starts_with(".robostickies/private/tags")
+                {
+                    *bytes = String::from_utf8(bytes.clone())
+                        .unwrap()
+                        .replacen("topic:", "description:", 1)
+                        .into_bytes();
+                }
+            }
             let config = PathBuf::from(".robostickies/config.toml");
             let text = String::from_utf8(expected[&config].clone())
                 .unwrap()
-                .replace("'v1alpha2'", "\"v1alpha3\"");
+                .replace("'v1alpha2'", "\"v1alpha4\"");
             expected.insert(config, text.into_bytes());
             for note in &notes {
                 let path = Path::new(".robostickies").join(&note.path);
@@ -316,11 +337,21 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             )
             .unwrap();
             let mut expected = before.clone();
+            for (path, bytes) in &mut expected {
+                if path.starts_with(".robostickies/tags")
+                    || path.starts_with(".robostickies/private/tags")
+                {
+                    *bytes = String::from_utf8(bytes.clone())
+                        .unwrap()
+                        .replacen("topic:", "description:", 1)
+                        .into_bytes();
+                }
+            }
             expected.remove(Path::new(".robostickies/config.toml"));
             assert_eq!(after, expected);
-            assert!(migrated.contains("data_version = \"v1alpha3\""));
+            assert!(migrated.contains("data_version = \"v1alpha4\""));
             assert_eq!(
-                migrated.replace(&format!("data_version = \"v1alpha3\"{line_ending}"), ""),
+                migrated.replace(&format!("data_version = \"v1alpha4\"{line_ending}"), ""),
                 original_config
             );
             for old in &notes {
@@ -375,7 +406,7 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
 
 #[test]
 fn explicit_versions_and_config_only_stores_upgrade_without_scaffolding() {
-    for version in ["'v1alpha1'", "'v1alpha2'", "'v1alpha3'"] {
+    for version in ["'v1alpha1'", "'v1alpha2'", "'v1alpha3'", "'v1alpha4'"] {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::with_user_config(temp.path(), None).unwrap();
         fs::create_dir(store.directory()).unwrap();
@@ -384,9 +415,9 @@ fn explicit_versions_and_config_only_stores_upgrade_without_scaffolding() {
         assert!(!store.upgrade(true).unwrap().wrote);
         let result = store.upgrade(false).unwrap();
         let after = fs::read_to_string(store.directory().join("config.toml")).unwrap();
-        if !version.contains("alpha3") {
+        if !version.contains("alpha4") {
             assert!(result.wrote);
-            assert_eq!(after, before.replace(version, "\"v1alpha3\""));
+            assert_eq!(after, before.replace(version, "\"v1alpha4\""));
         } else {
             assert!(!result.wrote);
             assert_eq!(before, after);

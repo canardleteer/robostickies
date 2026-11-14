@@ -3,7 +3,7 @@
 ## Private notes and publication
 
 ```sh
-robostickies tags create personal --topic "Local observations" --private
+robostickies tags create personal --private
 robostickies add "An observation for local use" --tag papercut --tag private:personal
 robostickies add "Another local note" --private
 robostickies list --scope private

@@ -35,6 +35,7 @@ struct NoteId {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct TagName {
+    /// Qualified tag identifier; private definitions use private:<name>.
     name: String,
 }
 
@@ -51,7 +52,9 @@ struct Scoped {
 #[derive(Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 struct TagsQuery {
+    /// Visibility to include; use public for shared output.
     scope: Scope,
+    /// Case-insensitive literal substring of the name or any supplied description.
     text: Option<String>,
 }
 
@@ -92,7 +95,8 @@ impl StickyServer {
 
     /// Call this at session start. Inspect upgrade.requirement, upgrade.message,
     /// upgrade.deferred and warnings even when validation is healthy. Then read tag
-    /// topics and startup guidance. Also returns configuration and an AGENTS.md snippet.
+    /// names, optional descriptions, and startup guidance. Also returns configuration
+    /// and an AGENTS.md snippet.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::store::Context>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn get_context(&self, Parameters(input): Parameters<Scoped>) -> CallToolResult {
         self.execute(move |store| store.context(input.scope)).await
@@ -155,7 +159,10 @@ impl StickyServer {
         self.execute(move |store| store.review(input.into())).await
     }
 
-    /// Define a tag using a bare filename slug, a short topic, and Markdown guidance.
+    /// Define a tag with a required bare name and optional description and Markdown guidance.
+    /// Self-explanatory tags usually do not need a description. Omit it or use null;
+    /// blank descriptions are rejected. Usage instructions belong in body.
+    /// Name-only creation in legacy stores requires an explicit upgrade_store first.
     /// Set private=true/false to override configuration defaults and name patterns.
     /// Private tags have distinct private:<name> identities even if public names match.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Tag>(), annotations(destructive_hint = false, open_world_hint = false))]
@@ -163,8 +170,9 @@ impl StickyServer {
         self.execute(move |store| store.create_tag(input)).await
     }
 
-    /// Discover defined tags and their short topics without loading every full body.
-    /// Filter by visibility or a case-insensitive name/topic substring.
+    /// Discover names and optional descriptions without loading every full body.
+    /// Self-explanatory tags usually have no description (null).
+    /// Filter by visibility or a case-insensitive name/description substring.
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::TagList>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn list_tags(&self, Parameters(input): Parameters<TagsQuery>) -> CallToolResult {
         self.execute(move |store| store.list_tags(input.scope, input.text.as_deref()))
@@ -172,6 +180,8 @@ impl StickyServer {
     }
 
     /// Read complete guidance for a tag, using private:<name> for private definitions.
+    /// The optional description explains the name; body holds Markdown usage guidance.
+    /// Self-explanatory tags usually have no description (null).
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::Tag>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn get_tag(&self, Parameters(input): Parameters<TagName>) -> CallToolResult {
         self.execute(move |store| store.get_tag(&input.name)).await
@@ -232,7 +242,7 @@ impl ServerHandler for StickyServer {
             (
                 "robostickies://context",
                 "Session context",
-                "Tag topics, startup guidance, and optional AGENTS.md paragraph",
+                "Tag names, optional descriptions, startup guidance, and optional AGENTS.md paragraph",
             ),
             (
                 "robostickies://guidance",
@@ -242,7 +252,7 @@ impl ServerHandler for StickyServer {
             (
                 "robostickies://tags",
                 "Tag catalog",
-                "Available qualified tag names and short topics",
+                "Qualified tag names and optional descriptions; self-explanatory tags usually need none",
             ),
             (
                 "robostickies://config",

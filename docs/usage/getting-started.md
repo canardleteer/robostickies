@@ -81,27 +81,51 @@ Connect your agent using the [MCP setup guide](mcp.md).
 
 ## Notes and tags
 
+Tags label notes. Each tag needs a name; its description and Markdown usage
+guidance are optional. Self-explanatory tags usually do not need a description.
+
+| CLI input | Example | Purpose |
+| --- | --- | --- |
+| `NAME` | `fresh-install` | Tag name passed to `--tag` and `tags get` |
+| `--description` | `"Setup and first-run checks"` | Optional explanation shown by `tags list` |
+| `BODY` or `--file` | `"Record setup steps, missing tools, and first-run errors."` | Optional instructions for when and how to use the tag |
+
+Define the tag before attaching it to a note:
+
 ```sh
-robostickies tags create tooling --topic "Tooling and development workflow" \
-  "Read the relevant tool's help and record concrete failures or useful helpers."
+robostickies tags create fresh-install
 robostickies tags list
-robostickies tags get tooling
-robostickies add "The build helper avoids repeated environment setup" --tag paperclip --tag tooling
+robostickies tags get fresh-install
+robostickies add "Setup required an extra PATH entry" --tag fresh-install
 robostickies get <uuid>
 robostickies update <uuid> "Corrected observation" --if-match <revision>
 robostickies archive <uuid> --if-match <revision-returned-by-update>
 robostickies unarchive <uuid> --if-match <revision-returned-by-archive>
 ```
 
+Add a description when the name benefits from explanation. Use the body for
+instructions about when and how to apply the tag:
+
+```sh
+robostickies tags create onboarding --description "Setup and first-run checks" \
+  "Record setup steps, missing tools, and first-run errors."
+```
+
+Omitted descriptions appear as `null` in JSON and have no YAML field in new tag
+files. Supplied descriptions must contain nonblank text and are preserved without
+trimming. `--topic` is no longer accepted. Use `tags --help` or `tags create --help`
+for the field descriptions and examples.
+
+Legacy stores still read and write descriptions using their required YAML `topic`
+field. Creating a tag without a description returns `upgrade_required` until you
+explicitly [upgrade the store](upgrades.md); installation alone does not migrate it.
+
 Predefined tags are optional. Notes can use multiple defined tags or no
-tags. Edit tag guidance directly in its Markdown file. Definitions require a
-short YAML `topic`; `read_on_start: true` includes full guidance in session
+tags. Edit tag guidance directly in its Markdown file. Descriptions use optional
+YAML `description` in current stores; `read_on_start: true` includes full guidance in session
 context. Additional frontmatter is retained during note edits, including comments.
 
-In the example, `tooling` is the tag identifier used by `--tag` and `tags get`.
-The topic, `Tooling and development workflow`, is a short catalog description.
-The body is longer Markdown guidance explaining how to use that tag. Private
-definitions use qualified identifiers such as `private:tooling`.
+Private definitions use qualified names such as `private:fresh-install`.
 
 ## Bodies and optional format hints
 

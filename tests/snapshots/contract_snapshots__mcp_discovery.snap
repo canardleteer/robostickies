@@ -3,7 +3,7 @@ source: tests/contract_snapshots.rs
 expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resources\": resources})"
 ---
 {
-  "instructions": "Call get_context at the start of work. Inspect upgrade.requirement and upgrade.message independently of healthy and diagnostics. Surface should recommendations unless upgrade.deferred is true; explain must requirements before ordinary work. Offer an explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. Use version to identify this running MCP build. A newer CLI on disk does not refresh an existing server; use a fresh server before verifying changed behavior. Read tag topics and full startup guidance. Record friction with papercut and useful successes with paperclip; other tags and general notes are welcome. Private tags use private:<name> and force ignored local storage. Public review includes only public notes; publish_note makes an explicit public copy. Read get_context for details and a portable AGENTS.md snippet. Use init_store if the repository is not initialized.",
+  "instructions": "Call get_context at the start of work. Inspect upgrade.requirement and upgrade.message independently of healthy and diagnostics. Surface should recommendations unless upgrade.deferred is true; explain must requirements before ordinary work. Offer an explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. Use version to identify this running MCP build. A newer CLI on disk does not refresh an existing server; use a fresh server before verifying changed behavior. Read tag names, optional descriptions, and full startup guidance. Record friction with papercut and useful successes with paperclip; other tags and general notes are welcome. Private tags use private:<name> and force ignored local storage. Public review includes only public notes; publish_note makes an explicit public copy. Read get_context for details and a portable AGENTS.md snippet. Use init_store if the repository is not initialized.",
   "resources": [
     {
       "description": "Local configuration defaults and their sources",
@@ -12,7 +12,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
       "uri": "robostickies://config"
     },
     {
-      "description": "Tag topics, startup guidance, and optional AGENTS.md paragraph",
+      "description": "Tag names, optional descriptions, startup guidance, and optional AGENTS.md paragraph",
       "mimeType": "application/json",
       "name": "Session context",
       "uri": "robostickies://context"
@@ -24,7 +24,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
       "uri": "robostickies://guidance"
     },
     {
-      "description": "Available qualified tag names and short topics",
+      "description": "Qualified tag names and optional descriptions; self-explanatory tags usually need none",
       "mimeType": "application/json",
       "name": "Tag catalog",
       "uri": "robostickies://tags"
@@ -172,19 +172,29 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "destructiveHint": false,
         "openWorldHint": false
       },
-      "description": "Define a tag using a bare filename slug, a short topic, and Markdown guidance.\nSet private=true/false to override configuration defaults and name patterns.\nPrivate tags have distinct private:<name> identities even if public names match.",
+      "description": "Define a tag with a required bare name and optional description and Markdown guidance.\nSelf-explanatory tags usually do not need a description. Omit it or use null;\nblank descriptions are rejected. Usage instructions belong in body.\nName-only creation in legacy stores requires an explicit upgrade_store first.\nSet private=true/false to override configuration defaults and name patterns.\nPrivate tags have distinct private:<name> identities even if public names match.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
           "body": {
             "default": "",
+            "description": "Optional Markdown usage instructions, separate from the catalog description.",
             "type": "string"
           },
+          "description": {
+            "description": "Optional short catalog explanation. Self-explanatory tags usually need none.\nOmit or use null for no description; blank text is invalid. Text is preserved.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "name": {
+            "description": "Required bare filename slug, e.g. fresh-install; used as the note tag.",
             "type": "string"
           },
           "private": {
+            "description": "Override configured privacy defaults; private tags use private:<name>.",
             "type": [
               "boolean",
               "null"
@@ -192,15 +202,12 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           },
           "read_on_start": {
             "default": false,
+            "description": "Include the full guidance in startup context.",
             "type": "boolean"
-          },
-          "topic": {
-            "type": "string"
           }
         },
         "required": [
-          "name",
-          "topic"
+          "name"
         ],
         "type": "object"
       },
@@ -219,7 +226,15 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "body": {
+            "description": "Optional Markdown usage instructions, separate from the description.",
             "type": "string"
+          },
+          "description": {
+            "description": "Optional catalog explanation. Self-explanatory names usually need none.\nUsage instructions belong in `body`; absent descriptions serialize as null.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "metadata": {
             "additionalProperties": true,
@@ -230,12 +245,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             "type": "string"
           },
           "read_on_start": {
+            "description": "Include this tag's complete guidance in session startup context.",
             "type": "boolean"
           },
           "revision": {
-            "type": "string"
-          },
-          "topic": {
             "type": "string"
           },
           "visibility": {
@@ -244,7 +257,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         },
         "required": [
           "name",
-          "topic",
+          "description",
           "read_on_start",
           "body",
           "visibility",
@@ -284,6 +297,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha3",
                 "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha4",
+                "description": "Tags use optional descriptions instead of required topics.",
                 "type": "string"
               }
             ]
@@ -410,7 +428,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Call this at session start. Inspect upgrade.requirement, upgrade.message,\nupgrade.deferred and warnings even when validation is healthy. Then read tag\ntopics and startup guidance. Also returns configuration and an AGENTS.md snippet.",
+      "description": "Call this at session start. Inspect upgrade.requirement, upgrade.message,\nupgrade.deferred and warnings even when validation is healthy. Then read tag\nnames, optional descriptions, and startup guidance. Also returns configuration\nand an AGENTS.md snippet.",
       "inputSchema": {
         "$defs": {
           "Scope": {
@@ -507,6 +525,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha3",
                 "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha4",
+                "description": "Tags use optional descriptions instead of required topics.",
+                "type": "string"
               }
             ]
           },
@@ -538,7 +561,15 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             "description": "A user-defined tag and its complete Markdown guidance.",
             "properties": {
               "body": {
+                "description": "Optional Markdown usage instructions, separate from the description.",
                 "type": "string"
+              },
+              "description": {
+                "description": "Optional catalog explanation. Self-explanatory names usually need none.\nUsage instructions belong in `body`; absent descriptions serialize as null.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "metadata": {
                 "additionalProperties": true,
@@ -549,12 +580,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "type": "string"
               },
               "read_on_start": {
+                "description": "Include this tag's complete guidance in session startup context.",
                 "type": "boolean"
               },
               "revision": {
-                "type": "string"
-              },
-              "topic": {
                 "type": "string"
               },
               "visibility": {
@@ -563,7 +592,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             },
             "required": [
               "name",
-              "topic",
+              "description",
               "read_on_start",
               "body",
               "visibility",
@@ -596,14 +625,20 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           "TagSummary": {
             "description": "Compact tag information suitable for indexing and discovery.",
             "properties": {
+              "description": {
+                "description": "Optional catalog explanation; self-explanatory names usually need none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "name": {
+                "description": "Scope-qualified tag name used when attaching it to notes.",
                 "type": "string"
               },
               "read_on_start": {
+                "description": "The complete guidance is included in session startup context.",
                 "type": "boolean"
-              },
-              "topic": {
-                "type": "string"
               },
               "visibility": {
                 "$ref": "#/$defs/Visibility"
@@ -611,7 +646,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             },
             "required": [
               "name",
-              "topic",
+              "description",
               "read_on_start",
               "visibility"
             ],
@@ -860,12 +895,13 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Read complete guidance for a tag, using private:<name> for private definitions.",
+      "description": "Read complete guidance for a tag, using private:<name> for private definitions.\nThe optional description explains the name; body holds Markdown usage guidance.\nSelf-explanatory tags usually have no description (null).",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
           "name": {
+            "description": "Qualified tag identifier; private definitions use private:<name>.",
             "type": "string"
           }
         },
@@ -889,7 +925,15 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "body": {
+            "description": "Optional Markdown usage instructions, separate from the description.",
             "type": "string"
+          },
+          "description": {
+            "description": "Optional catalog explanation. Self-explanatory names usually need none.\nUsage instructions belong in `body`; absent descriptions serialize as null.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "metadata": {
             "additionalProperties": true,
@@ -900,12 +944,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             "type": "string"
           },
           "read_on_start": {
+            "description": "Include this tag's complete guidance in session startup context.",
             "type": "boolean"
           },
           "revision": {
-            "type": "string"
-          },
-          "topic": {
             "type": "string"
           },
           "visibility": {
@@ -914,7 +956,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         },
         "required": [
           "name",
-          "topic",
+          "description",
           "read_on_start",
           "body",
           "visibility",
@@ -1226,7 +1268,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "Discover defined tags and their short topics without loading every full body.\nFilter by visibility or a case-insensitive name/topic substring.",
+      "description": "Discover names and optional descriptions without loading every full body.\nSelf-explanatory tags usually have no description (null).\nFilter by visibility or a case-insensitive name/description substring.",
       "inputSchema": {
         "$defs": {
           "Scope": {
@@ -1244,10 +1286,12 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
         "properties": {
           "scope": {
             "$ref": "#/$defs/Scope",
-            "default": "all"
+            "default": "all",
+            "description": "Visibility to include; use public for shared output."
           },
           "text": {
             "default": null,
+            "description": "Case-insensitive literal substring of the name or any supplied description.",
             "type": [
               "string",
               "null"
@@ -1286,14 +1330,20 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           "TagSummary": {
             "description": "Compact tag information suitable for indexing and discovery.",
             "properties": {
+              "description": {
+                "description": "Optional catalog explanation; self-explanatory names usually need none.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "name": {
+                "description": "Scope-qualified tag name used when attaching it to notes.",
                 "type": "string"
               },
               "read_on_start": {
+                "description": "The complete guidance is included in session startup context.",
                 "type": "boolean"
-              },
-              "topic": {
-                "type": "string"
               },
               "visibility": {
                 "$ref": "#/$defs/Visibility"
@@ -1301,7 +1351,7 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             },
             "required": [
               "name",
-              "topic",
+              "description",
               "read_on_start",
               "visibility"
             ],
@@ -1524,6 +1574,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha3",
                 "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha4",
+                "description": "Tags use optional descriptions instead of required topics.",
                 "type": "string"
               }
             ]
@@ -2108,6 +2163,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha3",
                 "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha4",
+                "description": "Tags use optional descriptions instead of required topics.",
+                "type": "string"
               }
             ]
           },
@@ -2256,6 +2316,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha3",
                 "description": "Explicit migration repairs legacy YAML tag indentation without changing values.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha4",
+                "description": "Tags use optional descriptions instead of required topics.",
                 "type": "string"
               }
             ]

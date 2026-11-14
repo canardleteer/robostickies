@@ -116,6 +116,110 @@ async fn subprocess_deadlines_reap_stalled_children_and_capture_all_streams() {
     );
 }
 
+fn set_tag_format(repo: &Path, legacy: bool) {
+    for directory in ["tags", "private/tags"] {
+        for entry in fs::read_dir(repo.join(".robostickies").join(directory)).unwrap() {
+            let path = entry.unwrap().path();
+            let text = fs::read_to_string(&path).unwrap();
+            let (from, to) = if legacy {
+                ("description:", "topic:")
+            } else {
+                ("topic:", "description:")
+            };
+            fs::write(path, text.replacen(from, to, 1)).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn optional_tag_descriptions_interoperate_through_cli_mcp_and_resources() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let client = start_mcp(root).await;
+        call_mcp(&client, "init_store", json!({})).await;
+        let tools = client.list_all_tools().await.unwrap();
+        let create = tools.iter().find(|tool| tool.name == "create_tag").unwrap();
+        assert_eq!(create.input_schema["required"], json!(["name"]));
+        assert!(create.input_schema["properties"].get("topic").is_none());
+        for field in ["name", "description", "body", "read_on_start", "private"] {
+            assert!(create.input_schema["properties"][field]["description"].is_string());
+        }
+        for (name, extra) in [("missing", json!({})), ("null", json!({"description":null})), ("described", json!({"description":"  Setup details  ","body":"When to apply this label","read_on_start":true}))] {
+            let mut args = extra.as_object().unwrap().clone();
+            args.insert("name".into(), json!(name));
+            args.insert("private".into(), json!(true));
+            let tag = call_mcp(&client, "create_tag", Value::Object(args)).await;
+            assert_eq!(tag["description"], extra.get("description").cloned().unwrap_or(Value::Null));
+            assert!(tag.get("topic").is_none());
+            let read = cli(root, &["tags", "get", &format!("private:{name}")]).await;
+            assert_eq!(read, tag);
+            let source = fs::read_to_string(root.join(format!(".robostickies/private/tags/{name}.md"))).unwrap();
+            assert_eq!(source.contains("description:"), name == "described");
+        }
+        for blank in ["", " ", "\n\t"] {
+            assert_eq!(error_mcp(&client,"create_tag",json!({"name":"blank","description":blank,"private":true})).await["error"]["code"], "invalid_input");
+            let output = command(root).args(["tags","create","blank","--description",blank,"--private"]).bounded_output().await.unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"], "invalid_input");
+            assert!(!root.join(".robostickies/private/tags/blank.md").exists());
+        }
+        let rejected = client.call_tool(CallToolRequestParams::new("create_tag").with_arguments(json!({"name":"old","topic":"Removed field"}).as_object().unwrap().clone())).await.unwrap();
+        assert_eq!(rejected.is_error, Some(true));
+        let rejected = command(root).args(["tags","create","old","--topic","Removed flag"]).bounded_output().await.unwrap();
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(!root.join(".robostickies/tags/old.md").exists());
+        let public = cli(root, &["tags","create","fresh-install"]).await;
+        assert_eq!(public["description"], Value::Null);
+        let read = call_mcp(&client,"get_tag",json!({"name":"fresh-install"})).await;
+        assert_eq!(read,public);
+        let list = call_mcp(&client,"list_tags",json!({"text":"SETUP DETAILS"})).await;
+        assert_eq!(list["tags"].as_array().unwrap().len(),1);
+        assert_eq!(list["tags"][0]["name"],"private:described");
+        assert_eq!(call_mcp(&client,"list_tags",json!({"text":"When to apply"})).await["tags"],json!([]));
+        let context = call_mcp(&client,"get_context",json!({})).await;
+        assert_eq!(resource_mcp(&client,"robostickies://tags").await,call_mcp(&client,"list_tags",json!({})).await);
+        assert_eq!(resource_mcp(&client,"robostickies://context").await,context);
+        assert!(context["startup_tags"].as_array().unwrap().iter().any(|tag| tag["name"] == "private:described" && tag["body"] == "When to apply this label\n"));
+        let shared = call_mcp(&client,"get_context",json!({"scope":"public"})).await;
+        assert!(!shared.to_string().contains("Setup details"));
+        assert!(!shared.to_string().contains("private:described"));
+        for (args, expected) in [
+            (vec!["tags","list","--text","fresh-install"], "fresh-install\n"),
+            (vec!["tags","get","fresh-install"], "fresh-install\n"),
+            (vec!["tags","create","bare-label"], "Created tag bare-label\n"),
+        ] {
+            let output = Command::new(env!("CARGO_BIN_EXE_robostickies")).args(["--repo",root.to_str().unwrap(),"--no-user-config"]).args(args).bounded_output().await.unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap(),expected);
+        }
+        // A config-only legacy store lets the same processes exercise the guard
+        // without disguising current-format definitions as legacy fixtures.
+        let legacy = tempfile::tempdir().unwrap();
+        fs::create_dir(legacy.path().join(".robostickies")).unwrap();
+        fs::write(legacy.path().join(".robostickies/config.toml"),"format_version = 1\ndata_version = 'v1alpha3'\n").unwrap();
+        let older = start_mcp(legacy.path()).await;
+        call_mcp(&older,"init_store",json!({})).await;
+        for description in [json!({}),json!({"description":null})] {
+            let mut args = description.as_object().unwrap().clone();
+            args.insert("name".into(),json!("without"));
+            let error = error_mcp(&older,"create_tag",Value::Object(args)).await;
+            assert_eq!(error["error"]["code"],"upgrade_required");
+            assert!(error["error"]["message"].as_str().unwrap().contains("upgrade --dry-run"));
+        }
+        let output = command(legacy.path()).args(["tags","create","without"]).bounded_output().await.unwrap();
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["code"],"upgrade_required");
+        assert!(!legacy.path().join(".robostickies/tags/without.md").exists());
+        let tag = call_mcp(&older,"create_tag",json!({"name":"with","description":"Existing representation"})).await;
+        assert_eq!(tag["description"],"Existing representation");
+        assert!(fs::read_to_string(legacy.path().join(".robostickies/tags/with.md")).unwrap().contains("topic:"));
+        call_mcp(&older,"upgrade_store",json!({})).await;
+        assert_eq!(cli(legacy.path(),&["tags","create","without"]).await["description"],Value::Null);
+        older.cancel().await.unwrap();
+        client.cancel().await.unwrap();
+    }).await.expect("Tag description interoperation timed out");
+}
+
 fn command(repo: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_robostickies"));
     command.args([
@@ -213,7 +317,7 @@ async fn cli_round_trip_stdin_search_archive_and_publish() {
             "tags",
             "create",
             "local",
-            "--topic",
+            "--description",
             "Local observations",
             "--private",
         ],
@@ -332,7 +436,7 @@ async fn real_stdio_mcp_discovery_mutation_errors_and_cli_interoperation() {
         assert!(serde_json::to_string(&guidance).unwrap().contains("AGENTS.md"));
         let init = client.call_tool(CallToolRequestParams::new("init_store").with_arguments(json!({}).as_object().unwrap().clone())).await.unwrap();
         assert_ne!(init.is_error, Some(true));
-        let tag = client.call_tool(CallToolRequestParams::new("create_tag").with_arguments(json!({"name": "local", "topic": "Personal observations", "private": true}).as_object().unwrap().clone())).await.unwrap();
+        let tag = client.call_tool(CallToolRequestParams::new("create_tag").with_arguments(json!({"name": "local", "description": "Personal observations", "private": true}).as_object().unwrap().clone())).await.unwrap();
         assert_eq!(tag.structured_content.unwrap()["name"], "private:local");
         let saved = client.call_tool(CallToolRequestParams::new("create_note").with_arguments(json!({"body": "MCP private observation", "tags": ["paperclip", "private:local"]}).as_object().unwrap().clone())).await.unwrap();
         let value = saved.structured_content.unwrap();
@@ -391,7 +495,7 @@ async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
                 "create_note" => json!({"body": "Unexpected note"}),
                 "update_note" => json!({"id": id, "body": "Unexpected edit", "expected_revision": saved["note"]["revision"]}),
                 "publish_note" => json!({"id": id, "dry_run": true, "expected_revision": saved["note"]["revision"]}),
-                "create_tag" => json!({"name": "unexpected", "topic": "Unexpected tag"}),
+                "create_tag" => json!({"name": "unexpected", "description": "Unexpected tag"}),
                 "get_context" | "init_store" | "list_notes" | "review_notes" | "list_tags"
                 | "get_config" | "validate_store" | "rebuild_index" | "upgrade_store" | "version" => json!({}),
                 name => panic!("Add a valid input for the new tool {name}"),
@@ -597,7 +701,7 @@ async fn context_and_all_resources_agree_before_and_after_initialization() {
                     &client,
                     "create_tag",
                     json!({
-                        "name": "local", "topic": "PRIVATE_TOPIC_SENTINEL",
+                        "name": "local", "description": "PRIVATE_TOPIC_SENTINEL",
                         "body": "PRIVATE_GUIDANCE_SENTINEL", "read_on_start": true, "private": true
                     }),
                 )
@@ -710,9 +814,11 @@ async fn startup_discovery_directs_agents_to_advice_independently_of_health() {
         for (source, requirement) in [
             ("v1alpha1", "should"),
             ("v1alpha2", "should"),
-            ("v1alpha3", "none"),
+            ("v1alpha3", "should"),
+            ("v1alpha4", "none"),
         ] {
-            fs::write(&config, original.replace("v1alpha3", source)).unwrap();
+            set_tag_format(temp.path(), source != "v1alpha4");
+            fs::write(&config, original.replace("v1alpha4", source)).unwrap();
             let context = call_mcp(&client, "get_context", json!({})).await;
             let health = call_mcp(&client, "validate_store", json!({})).await;
             assert_eq!(health["healthy"], true);
@@ -834,7 +940,8 @@ async fn yaml_edits_keep_comments_and_values_through_cli_and_mcp() {
                     if fields.starts_with("tags:\n[") {
                         // Legacy encodings are repaired only by the explicit upgrade.
                         let config = directory.join("config.toml");
-                        fs::write(&config, fs::read_to_string(&config).unwrap().replace("v1alpha3", "v1alpha2")).unwrap();
+                        set_tag_format(temp.path(), true);
+                        fs::write(&config, fs::read_to_string(&config).unwrap().replace("v1alpha4", "v1alpha2")).unwrap();
                         let legacy = call_mcp(&client,"get_note",json!({"id":id})).await;
                         assert_eq!(error_mcp(&client,"update_note",json!({"id":id,"expected_revision":legacy["revision"],"body":"No implicit repair"})).await["error"]["code"],"invalid_document");
                         for dry in [true, false] {
@@ -938,7 +1045,7 @@ async fn running_mcp_refreshes_sources_recovers_cache_and_shares_concurrent_writ
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|tag| tag["topic"] == "Manually updated topic.")
+                .any(|tag| tag["description"] == "Manually updated topic.")
         );
 
         let public_before = call_mcp(&client, "review_notes", json!({})).await;
@@ -1467,7 +1574,7 @@ async fn two_mcp_servers_and_cli_cannot_overwrite_each_others_edits() {
             assert_eq!(directory.join(format!("notes/{id}.md")).exists(), !winners[1]);
             assert_eq!(directory.join(format!("private/notes/{id}.md")).exists(), winners[1]);
         }
-        let request = || CallToolRequestParams::new("create_tag").with_arguments(json!({"name": "same", "topic": "Competing definition"}).as_object().unwrap().clone());
+        let request = || CallToolRequestParams::new("create_tag").with_arguments(json!({"name": "same", "description": "Competing definition"}).as_object().unwrap().clone());
         let (a, b) = tokio::join!(first.call_tool(request()), second.call_tool(request()));
         let a = a.unwrap(); let b = b.unwrap();
         assert_ne!(a.is_error == Some(true), b.is_error == Some(true));
@@ -1532,9 +1639,10 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let client = start_mcp(temp.path()).await;
         assert_eq!(error_mcp(&client, "upgrade_store", json!({})).await["error"]["code"], "not_initialized");
         call_mcp(&client, "init_store", json!({})).await;
-        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha3");
+        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha4");
         let config = temp.path().join(".robostickies/config.toml");
         let legacy = "\u{feff}# Preserve team settings\nformat_version = 1\n\n[tags]\ndefault_private = false\n";
+        set_tag_format(temp.path(), true);
         fs::write(&config, legacy).unwrap();
         let tools = client.list_all_tools().await.unwrap();
         let upgrade = tools.iter().find(|t| t.name == "upgrade_store").unwrap();
@@ -1564,7 +1672,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let original = fs::read(&path).unwrap();
         let preview = call_mcp(&client, "upgrade_store", json!({"dry_run": true})).await;
         assert_eq!(preview["source_version"], "v1alpha1");
-        assert_eq!(preview["target_version"], "v1alpha3");
+        assert_eq!(preview["target_version"], "v1alpha4");
         assert_eq!(preview["wrote"], false);
         assert_eq!(preview["dry_run"], true);
         assert_eq!(preview["snapshot"], Value::Null);
@@ -1584,7 +1692,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         assert_eq!(call_mcp(&client, "get_note", json!({"id":id})).await["revision"], saved["note"]["revision"]);
         for name in ["get_context", "get_config", "validate_store"] {
             let value = call_mcp(&second, name, json!({})).await;
-            assert_eq!(value["data_version"], "v1alpha3");
+            assert_eq!(value["data_version"], "v1alpha4");
             assert_eq!(value["upgrade_available"], false);
         }
         let output = command(temp.path()).args(["config", "show"]).bounded_output().await.unwrap();
@@ -1624,11 +1732,11 @@ async fn human_cli_renders_workflows_diagnostics_and_errors() {
                 "tags",
                 "create",
                 "tools",
-                "--topic",
+                "--description",
                 "Tools",
                 "--read-on-start",
             ],
-            vec!["tags", "create", "ordinary", "--topic", "Ordinary"],
+            vec!["tags", "create", "ordinary", "--description", "Ordinary"],
         ] {
             assert!(human(root, &args).await.status.success());
         }
@@ -1783,7 +1891,7 @@ async fn human_cli_renders_workflows_diagnostics_and_errors() {
         assert!(output.status.success());
         fs::write(
             root.join(".robostickies/tags/broken.md"),
-            "---\ntopic: ''\n---\n",
+            "---\ndescription: ''\n---\n",
         )
         .unwrap();
         for args in [vec!["tags", "list"], vec!["context"], vec!["list"]] {
@@ -1941,8 +2049,15 @@ async fn uninitialized_operations_have_the_same_cli_and_mcp_failure_contract() {
             ("review_notes", json!({}), vec!["review"]),
             (
                 "create_tag",
-                json!({"name":"tools","topic":"Tools","private":true}),
-                vec!["tags", "create", "tools", "--topic", "Tools", "--private"],
+                json!({"name":"tools","description":"Tools","private":true}),
+                vec![
+                    "tags",
+                    "create",
+                    "tools",
+                    "--description",
+                    "Tools",
+                    "--private",
+                ],
             ),
             (
                 "get_tag",
@@ -2514,6 +2629,7 @@ async fn fifo_preferences_warn_without_blocking_and_config_sources_are_rejected(
         let directory = temp.path().join(".robostickies");
         let config = directory.join("config.toml");
         let original = "format_version = 1\n";
+        set_tag_format(temp.path(), true);
         fs::write(&config, original).unwrap();
         let public_before = call_mcp(&client, "get_context", json!({"scope":"public"})).await;
         let preference = directory.join("private/upgrade-preferences.toml");

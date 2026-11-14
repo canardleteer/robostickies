@@ -22,6 +22,16 @@ struct NoteHeader {
 
 #[derive(Serialize, Deserialize)]
 struct TagHeader {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(default)]
+    read_on_start: bool,
+    #[serde(flatten)]
+    metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacyTagHeader {
     topic: String,
     #[serde(default)]
     read_on_start: bool,
@@ -175,16 +185,39 @@ pub(crate) fn parse_note_for_version(
     Ok(note)
 }
 
-pub(crate) fn parse_tag(text: &str, name: &str) -> Result<Tag> {
+pub(crate) fn parse_tag_for_version(
+    text: &str,
+    name: &str,
+    version: crate::version::DataVersion,
+) -> Result<Tag> {
     let (visibility, _) = tag_name(name)?;
     let (yaml, body) = split(text)?;
-    let header: TagHeader = noyalib::from_str(yaml).map_err(yaml_error)?;
-    if header.topic.trim().is_empty() {
-        return Err(invalid("Tag frontmatter must contain a nonempty topic"));
+    let header: TagHeader = if version.optional_tag_descriptions() {
+        let header: TagHeader = noyalib::from_str(yaml).map_err(yaml_error)?;
+        if header.metadata.contains_key("topic") {
+            return Err(invalid(
+                "Legacy tag field topic is not allowed in v1alpha4; use description",
+            ));
+        }
+        header
+    } else {
+        let legacy: LegacyTagHeader = noyalib::from_str(yaml).map_err(yaml_error)?;
+        TagHeader {
+            description: Some(legacy.topic),
+            read_on_start: legacy.read_on_start,
+            metadata: legacy.metadata,
+        }
+    };
+    if header
+        .description
+        .as_ref()
+        .is_some_and(|text| text.trim().is_empty())
+    {
+        return Err(invalid("Tag description must be nonblank when supplied"));
     }
     Ok(Tag {
         name: name.into(),
-        topic: header.topic,
+        description: header.description,
         read_on_start: header.read_on_start,
         body: body.into(),
         visibility,
@@ -236,14 +269,62 @@ pub(crate) fn render_note(note: &Note) -> Result<String> {
     Ok(assemble(&yaml, &note.body))
 }
 
-pub(crate) fn render_tag(input: &CreateTag) -> Result<String> {
-    let header = TagHeader {
-        topic: input.topic.clone(),
-        read_on_start: input.read_on_start,
-        metadata: BTreeMap::new(),
+pub(crate) fn render_tag(
+    input: &CreateTag,
+    version: crate::version::DataVersion,
+) -> Result<String> {
+    let yaml = if version.optional_tag_descriptions() {
+        noyalib::to_string(&TagHeader {
+            description: input.description.clone(),
+            read_on_start: input.read_on_start,
+            metadata: BTreeMap::new(),
+        })
+    } else {
+        let topic = input.description.clone().ok_or_else(|| Error::new(
+            "upgrade_required",
+            "Tags without descriptions require v1alpha4. Preview with robostickies upgrade --dry-run or upgrade_store with dry_run=true, then explicitly run robostickies upgrade or upgrade_store before creating this tag.",
+        ))?;
+        noyalib::to_string(&LegacyTagHeader {
+            topic,
+            read_on_start: input.read_on_start,
+            metadata: BTreeMap::new(),
+        })
     };
-    let yaml = noyalib::to_string(&header).map_err(yaml_error)?;
+    let yaml = yaml.map_err(yaml_error)?;
     Ok(assemble(&yaml, &input.body))
+}
+
+/// Prepare only the explicit v1alpha4 tag migration, including interrupted retries.
+pub(crate) fn migrate_tag_v1alpha4(original: &str, name: &str) -> Result<String> {
+    use crate::version::DataVersion;
+
+    let (yaml, _) = split(original)?;
+    let mut document = noyalib::cst::parse_document(yaml).map_err(yaml_error)?;
+    if document.as_value().get("topic").is_none() {
+        parse_tag_for_version(original, name, DataVersion::V1Alpha4)?;
+        return Ok(original.into());
+    }
+    let before = parse_tag_for_version(original, name, DataVersion::V1Alpha3)?;
+    if before.metadata.contains_key("description") {
+        return Err(invalid(
+            "Cannot rename topic: description metadata already exists; resolve the collision before upgrading",
+        ));
+    }
+    document
+        .rename_key("topic", "description")
+        .map_err(yaml_error)?;
+    let migrated = replace_frontmatter(original, yaml, &document.to_string())?;
+    let after = parse_tag_for_version(&migrated, name, DataVersion::V1Alpha4)?;
+    if before.description != after.description
+        || before.read_on_start != after.read_on_start
+        || before.metadata != after.metadata
+        || before.body != after.body
+    {
+        return Err(invalid(
+            "Tag rename did not preserve its values and guidance",
+        ));
+    }
+    Ok(migrated)
 }
 
 // Use the CST's classifications rather than scanning YAML ourselves. Block scalar
@@ -560,7 +641,9 @@ mod tests {
         );
         for text in ["---\ntopic: [\n---\n", "---\ntopic: ' '\n---\n"] {
             assert_eq!(
-                parse_tag(text, "tools").unwrap_err().code,
+                parse_tag_for_version(text, "tools", crate::version::CURRENT)
+                    .unwrap_err()
+                    .code,
                 "invalid_document"
             );
         }

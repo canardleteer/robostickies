@@ -56,7 +56,8 @@ to use it without adding tracked integration files.
   reports compiled version, commit, source state, target, compiler, and profile
   through the CLI and callable MCP `version` tool.
 - [Notes and tags](docs/usage/getting-started.md#notes-and-tags) capture friction
-  and useful successes, with custom tags and startup guidance.
+  and useful successes, with custom tag names, optional descriptions and usage
+  guidance, and CLI help examples.
 - [Markdown storage](docs/usage/storage.md) keeps notes in editable files that
   can be shared and tracked in Git, preserving YAML metadata and comments during edits.
 - [Body hints](docs/usage/getting-started.md#bodies-and-optional-format-hints)

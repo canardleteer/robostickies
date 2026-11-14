@@ -5,11 +5,13 @@ repository's data version. It covers both namespaces. New stores write:
 
 ```toml
 format_version = 1
-data_version = "v1alpha3"
+data_version = "v1alpha4"
 ```
 
-An absent `data_version` means `v1alpha1`. All three versions remain readable and
-writable for valid sources. Installing, opening, or initializing an existing store never migrates
+An absent `data_version` means `v1alpha1`. All four versions remain readable and
+writable for valid sources. Legacy tag creation requires a supplied description;
+name-only creation returns `upgrade_required` until an explicit upgrade.
+Installing, opening, or initializing an existing store never migrates
 it silently. Optional body hints use existing additional metadata and require
 neither a version bump nor a bulk rewrite.
 
@@ -32,7 +34,7 @@ guidance directs agents to report applicable recommendations and offer explicit
 preview, upgrade, or deferral choices. A saved optional deferral suppresses the
 reminder; it does not change the source version or requirement.
 
-An already-current `v1alpha3` store needs no migration when the executable is
+An already-current `v1alpha4` store needs no migration when the executable is
 updated. Initialization is the appropriate action for an absent store. Rebuild
 the cache when diagnostics or recovery require it, rather than after every install.
 
@@ -109,14 +111,29 @@ privacy, metadata, comments, body bytes, delimiters, and newline conventions are
 preserved. Already-valid files and customized guidance remain byte-identical.
 The revision changes for each repaired file, so re-read it before the next edit.
 
+The `v1alpha3` → `v1alpha4` step renames required tag `topic` keys to optional
+`description` keys in public and private definitions. Values remain intact,
+including descriptions equal to their tag names. Comments, quoting, aliases,
+metadata, guidance, and line endings are preserved. A pre-existing `description`
+metadata field is a collision, even if null or equal to the topic; unsupported
+lossless renames also stop the upgrade and identify the affected source. Resolve
+the source conflict before retrying; neither value is overwritten.
+
+Before upgrading, legacy readers expose `topic` as the runtime description and
+writers keep that representation when a description is supplied. Current stores
+use optional `description` and reject `topic`. Self-explanatory tags usually do
+not need a description; new name-only tags can be created after the upgrade.
+
 The upgrade prepares and validates all replacements before writing. It writes
-notes first and commits the shared version marker last. An interruption before
+note repairs and tag renames first and commits the shared version marker last. An interruption before
 that commit leaves the older version selected; retry the explicit upgrade to
-finish the remaining idempotent repairs. Cache contents do not participate.
+finish the remaining idempotent repairs. Migration preparation accepts valid
+already-renamed tags while the old marker remains; ordinary readers still enforce
+that marker's representation. Cache contents do not participate.
 
 Ordinary edits never perform this migration. Legacy malformed files remain
 readable for inspection, but edits reject them until an explicit upgrade or
-source correction. `v1alpha3` readers also reject that malformed representation,
+source correction. `v1alpha3` and later readers also reject that malformed representation,
 including when an older cached parse exists. Installing or initializing the
 application does not upgrade an existing store.
 
@@ -154,7 +171,7 @@ reject that setting; this does not require a repository data migration.
 ## Data version policy
 
 `data_version` identifies how authoritative repository data is interpreted and
-safely preserved. The current value is `v1alpha3`. Change it when existing stored
+safely preserved. The current value is `v1alpha4`. Change it when existing stored
 sources need migration, or readers and writers for the current version cannot
 safely interpret and preserve the new representation, including:
 

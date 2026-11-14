@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.3.0-rc.1 development baseline
 
+- Replace required tag topics with optional descriptions. CLI `--topic`, MCP
+  `topic`, and Rust `topic: String` fields are removed; use `--description` or
+  `description: Option<String>`. Name-only tags are supported, blank descriptions
+  are rejected, and absent descriptions appear as null in JSON.
+- Add `v1alpha4` and an explicit, lossless tag-key migration in both namespaces.
+  Legacy stores remain usable with supplied descriptions; name-only creation
+  requires an explicit upgrade. Discard older cached source entities on refresh.
 - Use noyalib typed CST edits, retain displaced YAML comments, and preserve
   body bytes during frontmatter-only edits.
 - Add the explicit `v1alpha2` → `v1alpha3` migration for malformed tag-list
