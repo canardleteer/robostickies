@@ -2,6 +2,21 @@
 
 ## Unreleased — 0.3.0-rc.1 development baseline
 
+## [0.3.0-rc.1](https://github.com/canardleteer/robostickies/compare/v0.2.0...v0.3.0-rc.1) - 2026-11-14
+
+### Added
+
+- [**breaking**] replace tag topics with optional descriptions
+
+### Fixed
+
+- version YAML repairs and preserve comments with noyalib
+
+### Other
+
+- *(deps)* update parsers and release action
+- *(deps)* version bumps
+
 - Replace required tag topics with optional descriptions. CLI `--topic`, MCP
   `topic`, and Rust `topic: String` fields are removed; use `--description` or
   `description: Option<String>`. Name-only tags are supported, blank descriptions
