@@ -34,7 +34,7 @@ pub const DISCOVERY_GUIDANCE: &str = concat!(
     "explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. ",
     "Use version to identify this running MCP build. A newer CLI on disk does not refresh ",
     "an existing server; use a fresh server before verifying changed behavior. ",
-    "Read tag topics and full startup guidance. Record friction with papercut and useful ",
+    "Read tag names, optional descriptions, and full startup guidance. Record friction with papercut and useful ",
     "successes with paperclip; other tags and general notes are welcome. Private tags use ",
     "private:<name> and force ignored local storage. Public review includes only public ",
     "notes; publish_note makes an explicit public copy. Read get_context for details and ",
@@ -102,9 +102,17 @@ storage. Initialization adds missing predefined definitions without overwriting
 custom guidance and honors tag privacy defaults.
 
 Discover tags with `tags list` / `list_tags` and read details with `tags get` /
-`get_tag`. Define tags in `tags/<name>.md`, using YAML `topic` and optionally
-`read_on_start`, followed by Markdown guidance. Create them with `tags create` /
-`create_tag`. Private definitions live separately in `private/tags/` and are
+`get_tag`. Create a tag by name with `tags create fresh-install` or
+`create_tag` with `{"name":"fresh-install"}`. Self-explanatory tags usually do
+not need a description. An optional `description` explains the name in the
+catalog; the optional Markdown body provides usage guidance. Define them in
+`tags/<name>.md`, with optional YAML `description` and `read_on_start` fields.
+Omit descriptions or use null for none; supplied text must be nonblank and is
+preserved without trimming. JSON results use null for absent descriptions.
+Legacy stores expose required YAML `topic` values as descriptions without
+rewriting sources. Supply a description there, or explicitly preview and upgrade
+before creating a name-only tag. Current stores reject the old `topic` field.
+Private definitions live separately in `private/tags/` and are
 always addressed as `private:<name>`; public names cannot shadow them.
 
 Notes live in `notes/<uuid>.md` or `private/notes/<uuid>.md`. YAML frontmatter
@@ -402,7 +410,7 @@ impl Store {
                 e.into()
             }
         })?;
-        document::parse_tag(&text, name)
+        document::parse_tag_for_version(&text, name, self.configuration_unlocked()?.data_version)
     }
 
     fn validate_tags(&self, tags: &mut Vec<String>) -> Result<bool> {
@@ -574,7 +582,7 @@ impl Store {
             fs::create_dir_all(self.checked(directory)?)?;
         }
         let defaults = self.configuration_unlocked()?;
-        for (name, topic, body) in [
+        for (name, description, body) in [
             (
                 "papercut",
                 "Problems that waste time or cause avoidable rework.",
@@ -603,7 +611,7 @@ impl Store {
             }
             let tag = self.create_tag_unlocked(CreateTag {
                 name: name.into(),
-                topic: topic.into(),
+                description: Some(description.into()),
                 body: body.into(),
                 read_on_start: true,
                 private: Some(defaults.tags.is_private(name, None)?),
@@ -744,7 +752,7 @@ impl Store {
     }
 
     fn prepare_upgrade(&self, original: &str, source: DataVersion) -> Result<Vec<Change>> {
-        let notes = index::validated_notes(&self.directory())?;
+        let (notes, tags) = index::validated_sources(&self.directory(), true)?;
         let mut changes = Vec::new();
         let migrated = version::apply_migrations(original, source, |candidate, target| {
             config::validate_migration(candidate, target)?;
@@ -770,9 +778,29 @@ impl Store {
                     }
                 }
             }
+            if target == DataVersion::V1Alpha4.as_str() {
+                for tag in &tags {
+                    let relative = self.tag_path(&tag.name)?;
+                    let path = self.checked(&relative)?;
+                    let before = fs::read_to_string(&path)?;
+                    if document::fingerprint(&before) != tag.revision {
+                        return Err(Error::new(
+                            "conflict",
+                            format!("Migration source changed during preparation: {relative}"),
+                        ));
+                    }
+                    let after =
+                        document::migrate_tag_v1alpha4(&before, &tag.name).map_err(|error| {
+                            Error::new(error.code, format!("{relative}: {}", error.message))
+                        })?;
+                    if before != after {
+                        changes.push(Change::new(path, before, after)?);
+                    }
+                }
+            }
             Ok(())
         })?;
-        // Commit the shared marker only after every prepared note replacement.
+        // Commit the shared marker only after every prepared source replacement.
         changes.push(Change::new(
             self.checked("config.toml")?,
             original.to_owned(),
@@ -821,13 +849,18 @@ impl Store {
 
     fn create_tag_unlocked(&self, input: CreateTag) -> Result<Tag> {
         document::slug(&input.name)?;
-        if input.topic.trim().is_empty() {
-            return Err(Error::new("invalid_input", "Tag topic cannot be empty"));
+        if input
+            .description
+            .as_ref()
+            .is_some_and(|text| text.trim().is_empty())
+        {
+            return Err(Error::new(
+                "invalid_input",
+                "Tag description must be nonblank when supplied",
+            ));
         }
-        let private = self
-            .configuration_unlocked()?
-            .tags
-            .is_private(&input.name, input.private)?;
+        let configuration = self.configuration_unlocked()?;
+        let private = configuration.tags.is_private(&input.name, input.private)?;
         let name = format!("{}{}", if private { "private:" } else { "" }, input.name);
         let relative = self.tag_path(&name)?;
         let path = self.checked(&relative)?;
@@ -840,13 +873,17 @@ impl Store {
         if private {
             self.assert_ignored(&relative)?;
         }
-        let text = document::render_tag(&input)?;
-        let tag = document::parse_tag(&text, &name)?;
+        let text = document::render_tag(&input, configuration.data_version)?;
+        let tag = document::parse_tag_for_version(&text, &name, configuration.data_version)?;
         document::atomic_write(&path, &text, false)?;
         Ok(tag)
     }
 
     /// Create a tag in its selected namespace; existing definitions are never overwritten.
+    /// Descriptions are optional and preserved verbatim, but cannot be blank.
+    /// Legacy stores write supplied descriptions as `topic` without migrating.
+    /// Returns `upgrade_required` for name-only creation in a legacy store, or
+    /// input, configuration, privacy, conflict, lock, and I/O errors before saving.
     pub fn create_tag(&self, input: CreateTag) -> Result<Tag> {
         let _guard = self.lock(false)?;
         let tag = self.create_tag_unlocked(input)?;
@@ -860,7 +897,7 @@ impl Store {
         self.read_tag(name)
     }
 
-    /// Discover short tag topics, optionally matching a name or topic substring.
+    /// Discover names and optional descriptions, matching either by literal substring.
     pub fn list_tags(&self, scope: Scope, text: Option<&str>) -> Result<TagList> {
         let _guard = self.lock_for_scope(false, scope)?;
         let index = self.index(false)?;
@@ -1110,7 +1147,7 @@ impl Store {
         })
     }
 
-    /// Explain capabilities, tag topics, startup guidance, and optional agent integration.
+    /// Explain capabilities, tag names and optional descriptions, startup guidance, and optional agent integration.
     /// This operation is available even when the repository has not been initialized.
     pub fn context(&self, scope: Scope) -> Result<Context> {
         let mut context = Context {
@@ -1161,7 +1198,7 @@ impl Store {
 
     /// Portable paragraph callers may place into their own AGENTS.md format.
     pub fn agents_snippet(&self) -> String {
-        "At the start of work, run `robostickies context` or call the MCP `get_context` tool. Inspect upgrade advice and warnings even when validation is healthy, then read tag topics and startup guidance. Use MCP `version` to identify the running server after installation; the CLI's version does not identify an existing MCP process. Record concrete friction and useful wins with the defined tags while continuing your task. See [.robostickies/README.md](.robostickies/README.md) for details. Keep private observations in the private namespace; publish an explicit public copy before including them in public review.\n".into()
+        "At the start of work, run `robostickies context` or call the MCP `get_context` tool. Inspect upgrade advice and warnings even when validation is healthy, then read tag names, optional descriptions, and startup guidance. Use MCP `version` to identify the running server after installation; the CLI's version does not identify an existing MCP process. Record concrete friction and useful wins with the defined tags while continuing your task. See [.robostickies/README.md](.robostickies/README.md) for details. Keep private observations in the private namespace; publish an explicit public copy before including them in public review.\n".into()
     }
 
     /// Rebuild the entire disposable index and return source validation results.
@@ -1399,7 +1436,7 @@ mod tests {
             store
                 .create_tag(CreateTag {
                     name: "empty".into(),
-                    topic: " ".into(),
+                    description: Some(" ".into()),
                     body: String::new(),
                     read_on_start: false,
                     private: None
@@ -1447,7 +1484,7 @@ mod failure_tests {
             store
                 .create_tag(CreateTag {
                     name: "tools".into(),
-                    topic: "Tools".into(),
+                    description: Some("Tools".into()),
                     body: String::new(),
                     read_on_start: false,
                     private: None,
@@ -1469,7 +1506,7 @@ mod failure_tests {
         let tag = store
             .create_tag(CreateTag {
                 name: "local".into(),
-                topic: "Local".into(),
+                description: Some("Local".into()),
                 body: "Guidance".into(),
                 read_on_start: false,
                 private: Some(true),
@@ -1589,7 +1626,7 @@ mod input_failure_tests {
             store
                 .create_tag(CreateTag {
                     name: "Invalid".into(),
-                    topic: "Tools".into(),
+                    description: Some("Tools".into()),
                     body: String::new(),
                     read_on_start: false,
                     private: None

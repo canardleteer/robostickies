@@ -5,7 +5,7 @@ the guide for the task:
 
 | Guide | Topics |
 | --- | --- |
-| [Install and start](getting-started.md) | Inspect CLI/MCP build identity, distinguish tag identifiers/topics/guidance, and add text with optional body hints |
+| [Install and start](getting-started.md) | Inspect CLI/MCP build identity, create tags with optional descriptions and usage guidance, and add text with optional body hints |
 | [Markdown storage](storage.md) | Edit source files and share them in Git |
 | [Private notes and configuration](privacy-and-configuration.md) | Keep the store local, configure TOML 1.1 defaults, or publish reviewed notes |
 | [Search and review](search-and-review.md) | Select matching notes and prepare a complete review |

@@ -18,7 +18,7 @@ const TAGS: TableDefinition<&str, &[u8]> = TableDefinition::new("tags_v1");
 const FILTERS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("filters_v1");
 const DATES: TableDefinition<&str, &str> = TableDefinition::new("dates_v1");
 const METADATA: TableDefinition<&str, u64> = TableDefinition::new("metadata_v1");
-const GENERATION: u64 = 2;
+const GENERATION: u64 = 3;
 
 #[derive(Clone, Serialize, Deserialize)]
 enum Entity {
@@ -80,7 +80,7 @@ impl Index {
             .map(|v| v.value())
             != Some(GENERATION);
         let mut old = BTreeMap::new();
-        {
+        if !outdated {
             let table = tx.open_table(FILES)?;
             for row in table.iter()? {
                 let (key, value) = row?;
@@ -94,7 +94,7 @@ impl Index {
             notes,
             tags,
             diagnostics,
-        } = read_sources(root, &old)?;
+        } = read_sources(root, &old, false)?;
         let changed = force
             || outdated
             || old.len() != sources.len()
@@ -161,7 +161,11 @@ impl Index {
             let tag: Tag = serde_json::from_slice(data.value())?;
             if scope.includes(tag.visibility)
                 && needle.as_ref().is_none_or(|q| {
-                    tag.name.to_lowercase().contains(q) || tag.topic.to_lowercase().contains(q)
+                    tag.name.to_lowercase().contains(q)
+                        || tag
+                            .description
+                            .as_ref()
+                            .is_some_and(|text| text.to_lowercase().contains(q))
                 })
             {
                 tags.push(tag);
@@ -317,24 +321,38 @@ struct Catalog {
 /// Validate authoritative sources without opening or repairing the disposable cache.
 /// Caller must already hold the operation lock.
 pub(crate) fn validate_sources(root: &Path) -> crate::Result<()> {
-    validated_notes(root).map(|_| ())
+    validated_sources(root, false).map(|_| ())
 }
 
-pub(crate) fn validated_notes(root: &Path) -> crate::Result<Vec<Note>> {
-    let catalog = read_sources(root, &BTreeMap::new())
+pub(crate) fn validated_sources(
+    root: &Path,
+    for_upgrade: bool,
+) -> crate::Result<(Vec<Note>, Vec<Tag>)> {
+    let catalog = read_sources(root, &BTreeMap::new(), for_upgrade)
         .map_err(|error| Error::new("io", error.to_string()))?;
-    if !catalog.diagnostics.is_empty() {
+    if let Some(diagnostic) = catalog.diagnostics.first() {
         return Err(Error::new(
             "invalid_document",
-            "Authoritative source validation failed; run robostickies doctor for local diagnostics",
+            format!(
+                "Authoritative source validation failed at {}: {}; run robostickies doctor for local diagnostics",
+                diagnostic.path, diagnostic.message
+            ),
         ));
     }
-    Ok(catalog.notes.into_values().collect())
+    Ok((
+        catalog.notes.into_values().collect(),
+        catalog.tags.into_values().collect(),
+    ))
 }
 
-fn read_sources(root: &Path, old: &BTreeMap<String, Source>) -> anyhow::Result<Catalog> {
+fn read_sources(
+    root: &Path,
+    old: &BTreeMap<String, Source>,
+    for_upgrade: bool,
+) -> anyhow::Result<Catalog> {
     let mut sources = BTreeMap::new();
     let mut diagnostics = vec![];
+    let version = crate::config::load_shared(root)?.data_version;
     for (directory, visibility, is_tag) in [
         ("tags", Visibility::Public, true),
         ("private/tags", Visibility::Private, true),
@@ -345,7 +363,11 @@ fn read_sources(root: &Path, old: &BTreeMap<String, Source>) -> anyhow::Result<C
             root,
             directory,
             visibility,
-            is_tag,
+            SourceKind {
+                is_tag,
+                version,
+                for_upgrade,
+            },
             old,
             &mut sources,
             &mut diagnostics,
@@ -427,16 +449,27 @@ fn quarantine(root: &Path) -> std::io::Result<()> {
     fs::rename(root.join("cache/index.redb"), backup)
 }
 
+#[derive(Clone, Copy)]
+struct SourceKind {
+    is_tag: bool,
+    version: crate::version::DataVersion,
+    for_upgrade: bool,
+}
+
 fn scan(
     root: &Path,
     directory: &str,
     visibility: Visibility,
-    is_tag: bool,
+    kind: SourceKind,
     old: &BTreeMap<String, Source>,
     sources: &mut BTreeMap<String, Source>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
-    let version = crate::config::load_shared(root)?.data_version;
+    let SourceKind {
+        is_tag,
+        version,
+        for_upgrade,
+    } = kind;
     if let Err(error) = document::safe_path(root, Path::new(directory)) {
         diagnostics.push(Diagnostic {
             path: directory.into(),
@@ -497,7 +530,17 @@ fn scan(
                         },
                         filename.trim_end_matches(".md")
                     );
-                    document::parse_tag(&text, &name).map(Entity::Tag)
+                    let parsed = document::parse_tag_for_version(&text, &name, version);
+                    // Only migration preparation accepts already-renamed sources
+                    // while the shared marker still names the old representation.
+                    let parsed = if for_upgrade && !version.optional_tag_descriptions() {
+                        parsed.or_else(|_| {
+                            document::parse_tag_for_version(&text, &name, crate::version::CURRENT)
+                        })
+                    } else {
+                        parsed
+                    };
+                    parsed.map(Entity::Tag)
                 } else {
                     document::parse_note_for_version(&text, &path, visibility, version)
                         .map(Entity::Note)

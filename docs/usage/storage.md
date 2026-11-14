@@ -20,7 +20,7 @@ For example, `tags/tooling.md`:
 
 ```markdown
 ---
-topic: Tooling and development workflow
+description: Build tools and development workflow
 read_on_start: true
 ---
 Record the triggering command, observed behavior, and useful workaround.
@@ -62,8 +62,22 @@ exposed as `metadata.body_format`. It does not select a parser or execute the
 body. Unknown strings and legacy non-string metadata remain readable. See
 [body hints](getting-started.md#bodies-and-optional-format-hints) for editing rules.
 
-The `tooling` filename is the tag identifier. Its `topic` is the short catalog
-description, and its body supplies longer Markdown guidance.
+The `tooling` filename is the required tag identifier. Its optional `description`
+explains the name in the catalog, and its optional body supplies Markdown usage
+guidance. Self-explanatory tags usually do not need a description:
+
+```markdown
+---
+read_on_start: false
+---
+```
+
+For example, that file can define `tags/fresh-install.md` using only its name.
+Missing or null descriptions mean no explanation; empty or whitespace-only text
+is invalid. New files omit absent descriptions, while JSON results use `null`.
+Current-format files reject `topic`. Legacy stores require it and expose its
+value as the runtime description without changing source bytes. The explicit
+`v1alpha3` → `v1alpha4` [upgrade](upgrades.md) renames those keys in both namespaces.
 
 The shared configuration holds the repository's sole `data_version`. Markdown
 documents have no version field, and the disposable index uses a separate cache

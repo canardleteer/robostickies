@@ -18,7 +18,7 @@ The binary must be on the client's PATH.
 ## Session startup
 
 Call `get_context` first. Read its `upgrade.requirement` and `upgrade.message`
-alongside warnings, then read tag topics and full startup guidance. A healthy
+alongside warnings, then read tag names and optional descriptions and full startup guidance. A healthy
 `validate_store` report can still recommend a data upgrade. Surface `should`
 recommendations unless `upgrade.deferred` is true; explain `must` requirements
 before ordinary work. Offer explicit preview, upgrade, or deferral choices instead
@@ -126,7 +126,7 @@ explains file scopes.
 ## Using the server
 
 Discovery includes brief startup instructions even before initialization.
-`get_context` returns tag topics with full startup guidance and an optional
+`get_context` returns tag names and optional descriptions with full startup guidance and an optional
 AGENTS.md paragraph. `init_store` scaffolds a store through MCP.
 Local all/private context includes the canonical `repository_root` before and
 after initialization. The CLI displays it too. Public context omits the field
@@ -149,6 +149,31 @@ defaults. Private tag references still force private note storage. `update_note`
 and `publish_note` require `expected_revision`; get/create/update responses supply
 the current revision. `publish_note` defaults to immediate copying, with
 `dry_run: true` for previews. Tools return structured results and tool errors.
+
+Create a tag using just its name:
+
+```json
+{"name": "fresh-install"}
+```
+
+Self-explanatory tags usually do not need a description. When the name needs
+explanation, supply `description`; use `body` for separate Markdown instructions:
+
+```json
+{
+  "name": "onboarding",
+  "description": "Setup and first-run checks",
+  "body": "Record setup steps, missing tools, and first-run errors."
+}
+```
+
+`create_tag` accepts a missing or null description, rejects empty or whitespace-only
+text, and preserves supplied nonblank text without trimming. `get_tag`, `list_tags`,
+and context return `description: null` when absent; new Markdown omits the field.
+Tag search matches names and any descriptions. The old `topic` input is rejected.
+Legacy stores expose existing topics as descriptions and still require a supplied
+description for creation. Name-only creation returns `upgrade_required` with
+instructions to preview and explicitly [upgrade](upgrades.md) first.
 
 Note creation, updates, and publication accept optional `body_format` strings.
 Updates also accept `clear_body_format: true`; set and clear conflict. Hints

@@ -10,6 +10,21 @@ use serde::Serialize;
 
 use crate::{Store, model::*};
 
+const TAG_HELP: &str = r#"Tag fields:
+  NAME           Required tag name used with --tag, e.g. fresh-install.
+  --description  Optional short explanation shown by tags list.
+  BODY           Optional Markdown guidance on when and how to use the tag.
+
+Examples:
+  robostickies tags create fresh-install
+  robostickies tags create onboarding --description "Setup and first-run checks" \
+    "Record setup steps, missing tools, and first-run errors."
+  robostickies add "Setup required an extra PATH entry" --tag fresh-install
+
+Self-explanatory tags usually do not need a description.
+Use tags get onboarding to read the description and guidance.
+Name-only creation in a legacy store requires an explicit robostickies upgrade."#;
+
 /// Repository notes for humans and agents.
 #[derive(Debug, Parser)]
 #[command(version, long_version = crate::build_info::long_version(), about, arg_required_else_help = true)]
@@ -55,7 +70,7 @@ enum Command {
         /// Advisory body hint: markdown, text, yaml, or another nonblank string.
         #[arg(long)]
         body_format: Option<String>,
-        /// Defined tag identifier; repeat for multiple tags (for example, tooling).
+        /// Defined tag name, e.g. fresh-install; repeat for multiple tags.
         #[arg(long = "tag")]
         tags: Vec<String>,
         #[command(flatten)]
@@ -121,7 +136,8 @@ enum Command {
         #[arg(long)]
         text: Option<String>,
     },
-    /// Define tags or discover their short topics and complete guidance.
+    /// Define tags for labeling notes, with optional descriptions and guidance.
+    #[command(after_help = TAG_HELP)]
     Tags {
         #[command(subcommand)]
         command: TagCommand,
@@ -145,7 +161,7 @@ enum Command {
         #[arg(long)]
         if_match: String,
     },
-    /// Read session guidance, tag topics, startup details, and an AGENTS.md snippet.
+    /// Read session guidance, tag names and optional descriptions, startup details, and an AGENTS.md snippet.
     Context {
         #[arg(long, value_enum, default_value = "all")]
         scope: Scope,
@@ -196,13 +212,14 @@ impl Command {
 
 #[derive(Debug, Subcommand)]
 enum TagCommand {
-    /// Define a tag identifier, short topic, and longer Markdown guidance.
+    /// Define a tag name, with an optional description and usage guidance.
+    #[command(after_help = TAG_HELP)]
     Create {
-        /// Bare identifier used by --tag (for example, tooling).
+        /// Tag name used by --tag, e.g. fresh-install.
         name: String,
-        /// Short description shown in the tag catalog; not the tag identifier.
+        /// Optional catalog explanation; self-explanatory tags usually need none.
         #[arg(long)]
-        topic: String,
+        description: Option<String>,
         #[command(flatten)]
         text: TextInput,
         #[arg(long)]
@@ -210,14 +227,14 @@ enum TagCommand {
         #[command(flatten)]
         visibility: VisibilityArgs,
     },
-    /// Discover tag identifiers and their short topics.
+    /// List tag names and any descriptions.
     List {
         #[arg(long, value_enum, default_value = "all")]
         scope: Scope,
         #[arg(long)]
         text: Option<String>,
     },
-    /// Read a tag's short topic and complete Markdown guidance.
+    /// Read a tag's optional description and usage guidance.
     Get {
         /// Identifier, qualified as private:<name> for private definitions.
         name: String,
@@ -498,20 +515,25 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Tags { command } => match command {
             TagCommand::Create {
                 name,
-                topic,
+                description,
                 text,
                 read_on_start,
                 visibility,
             } => emit(
                 store.create_tag(CreateTag {
                     name,
-                    topic,
+                    description,
                     body: text.read()?.unwrap_or_default(),
                     read_on_start,
                     private: visibility.value(),
                 })?,
                 json,
-                |tag| format!("Created tag {}\n{}\n", tag.name, tag.topic),
+                |tag| {
+                    format!(
+                        "Created tag {}\n",
+                        tag_label(&tag.name, tag.description.as_deref())
+                    )
+                },
             ),
             TagCommand::List { scope, text } => {
                 emit(store.list_tags(scope, text.as_deref())?, json, |list| {
@@ -519,16 +541,16 @@ pub async fn run(cli: Cli) -> Result<()> {
                         .tags
                         .iter()
                         .map(|tag| {
-                            format!(
-                                "{}{} — {}",
+                            let name = format!(
+                                "{}{}",
                                 tag.name,
                                 if tag.read_on_start {
                                     " [read on start]"
                                 } else {
                                     ""
-                                },
-                                tag.topic
-                            )
+                                }
+                            );
+                            tag_label(&name, tag.description.as_deref())
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -539,7 +561,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 })
             }
             TagCommand::Get { name } => emit(store.get_tag(&name)?, json, |tag| {
-                format!("{}\n{}\n\n{}", tag.name, tag.topic, tag.body)
+                let mut text = format!("{}\n", tag_label(&tag.name, tag.description.as_deref()));
+                if !tag.body.is_empty() {
+                    text.push_str(&format!("\n{}", tag.body));
+                }
+                text
             }),
         },
         Command::Publish {
@@ -592,7 +618,10 @@ pub async fn run(cli: Cli) -> Result<()> {
             }
             text.push_str("\n## Available tags\n\n");
             for tag in &context.tags {
-                text.push_str(&format!("- {}: {}\n", tag.name, tag.topic));
+                text.push_str(&format!(
+                    "- {}\n",
+                    tag_label(&tag.name, tag.description.as_deref())
+                ));
             }
             for tag in &context.startup_tags {
                 text.push_str(&format!("\n## {}\n\n{}\n", tag.name, tag.body));
@@ -674,6 +703,13 @@ fn emit<T: Serialize>(value: T, json: bool, render: impl FnOnce(&T) -> String) -
     Ok(())
 }
 
+fn tag_label(name: &str, description: Option<&str>) -> String {
+    match description {
+        Some(description) => format!("{name} — {description}"),
+        None => name.into(),
+    }
+}
+
 fn format_note(note: &Note) -> String {
     format!(
         "{} [{}; {}]\nTags: {}\nRevision: {}\n\n{}",
@@ -744,7 +780,7 @@ mod tests {
                 "tags",
                 "create",
                 "tooling",
-                "--topic",
+                "--description",
                 "Tools",
                 "--private",
                 "--shared"

@@ -1,6 +1,5 @@
 ---
 source: tests/contract_snapshots.rs
-assertion_line: 66
 expression: help
 ---
 $ robostickies --help
@@ -18,9 +17,9 @@ Commands:
   list       Browse notes with optional filters
   search     Search note bodies for a case-insensitive literal substring
   review     Produce complete review material; visibility defaults to public
-  tags       Define tags or discover their short topics and complete guidance
+  tags       Define tags for labeling notes, with optional descriptions and guidance
   publish    Copy a private note into public storage, retaining the original
-  context    Read session guidance, tag topics, startup details, and an AGENTS.md snippet
+  context    Read session guidance, tag names and optional descriptions, startup details, and an AGENTS.md snippet
   config     Inspect effective configuration and its source files
   doctor     Validate source files and Git privacy protections
   reindex    Rebuild the disposable redb index from Markdown sources
@@ -49,7 +48,7 @@ Options:
       --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
       --body-format <BODY_FORMAT>  Advisory body hint: markdown, text, yaml, or another nonblank string
       --json                       Emit structured JSON instead of human-readable output
-      --tag <TAGS>                 Defined tag identifier; repeat for multiple tags (for example, tooling)
+      --tag <TAGS>                 Defined tag name, e.g. fresh-install; repeat for multiple tags
       --user-config <USER_CONFIG>  Override the platform-standard user configuration file
       --no-user-config             Disable user configuration for reproducible automation
       --private                    Keep the new tag or note in ignored private storage
@@ -82,14 +81,14 @@ Options:
   -h, --help                       Print help
 
 $ robostickies tags --help
-Define tags or discover their short topics and complete guidance
+Define tags for labeling notes, with optional descriptions and guidance
 
 Usage: robostickies tags [OPTIONS] <COMMAND>
 
 Commands:
-  create  Define a tag identifier, short topic, and longer Markdown guidance
-  list    Discover tag identifiers and their short topics
-  get     Read a tag's short topic and complete Markdown guidance
+  create  Define a tag name, with an optional description and usage guidance
+  list    List tag names and any descriptions
+  get     Read a tag's optional description and usage guidance
   help    Print this message or the help of the given subcommand(s)
 
 Options:
@@ -99,18 +98,33 @@ Options:
       --no-user-config             Disable user configuration for reproducible automation
   -h, --help                       Print help
 
-$ robostickies tags create --help
-Define a tag identifier, short topic, and longer Markdown guidance
+Tag fields:
+  NAME           Required tag name used with --tag, e.g. fresh-install.
+  --description  Optional short explanation shown by tags list.
+  BODY           Optional Markdown guidance on when and how to use the tag.
 
-Usage: robostickies tags create [OPTIONS] --topic <TOPIC> <NAME> [BODY]
+Examples:
+  robostickies tags create fresh-install
+  robostickies tags create onboarding --description "Setup and first-run checks" \
+    "Record setup steps, missing tools, and first-run errors."
+  robostickies add "Setup required an extra PATH entry" --tag fresh-install
+
+Self-explanatory tags usually do not need a description.
+Use tags get onboarding to read the description and guidance.
+Name-only creation in a legacy store requires an explicit robostickies upgrade.
+
+$ robostickies tags create --help
+Define a tag name, with an optional description and usage guidance
+
+Usage: robostickies tags create [OPTIONS] <NAME> [BODY]
 
 Arguments:
-  <NAME>  Bare identifier used by --tag (for example, tooling)
+  <NAME>  Tag name used by --tag, e.g. fresh-install
   [BODY]  UTF-8 text, or - to read stdin. Use Markdown for tag guidance
 
 Options:
+      --description <DESCRIPTION>  Optional catalog explanation; self-explanatory tags usually need none
       --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
-      --topic <TOPIC>              Short description shown in the tag catalog; not the tag identifier
       --file <FILE>                Read UTF-8 text from a file, or - for stdin
       --json                       Emit structured JSON instead of human-readable output
       --read-on-start
@@ -119,6 +133,21 @@ Options:
       --private                    Keep the new tag or note in ignored private storage
       --public                     Select public creation; private note tags still require private storage
   -h, --help                       Print help
+
+Tag fields:
+  NAME           Required tag name used with --tag, e.g. fresh-install.
+  --description  Optional short explanation shown by tags list.
+  BODY           Optional Markdown guidance on when and how to use the tag.
+
+Examples:
+  robostickies tags create fresh-install
+  robostickies tags create onboarding --description "Setup and first-run checks" \
+    "Record setup steps, missing tools, and first-run errors."
+  robostickies add "Setup required an extra PATH entry" --tag fresh-install
+
+Self-explanatory tags usually do not need a description.
+Use tags get onboarding to read the description and guidance.
+Name-only creation in a legacy store requires an explicit robostickies upgrade.
 
 $ robostickies publish --help
 Copy a private note into public storage, retaining the original

@@ -171,8 +171,12 @@ pub struct Note {
 pub struct Tag {
     /// Scope-qualified name, e.g. `tooling` or `private:tooling`.
     pub name: String,
-    pub topic: String,
+    /// Optional catalog explanation. Self-explanatory names usually need none.
+    /// Usage instructions belong in `body`; absent descriptions serialize as null.
+    pub description: Option<String>,
+    /// Include this tag's complete guidance in session startup context.
     pub read_on_start: bool,
+    /// Optional Markdown usage instructions, separate from the description.
     pub body: String,
     pub visibility: Visibility,
     pub revision: String,
@@ -182,8 +186,11 @@ pub struct Tag {
 /// Compact tag information suitable for indexing and discovery.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct TagSummary {
+    /// Scope-qualified tag name used when attaching it to notes.
     pub name: String,
-    pub topic: String,
+    /// Optional catalog explanation; self-explanatory names usually need none.
+    pub description: Option<String>,
+    /// The complete guidance is included in session startup context.
     pub read_on_start: bool,
     pub visibility: Visibility,
 }
@@ -192,7 +199,7 @@ impl From<&Tag> for TagSummary {
     fn from(tag: &Tag) -> Self {
         Self {
             name: tag.name.clone(),
-            topic: tag.topic.clone(),
+            description: tag.description.clone(),
             read_on_start: tag.read_on_start,
             visibility: tag.visibility,
         }
@@ -327,12 +334,18 @@ pub struct UpdateNote {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTag {
+    /// Required bare filename slug, e.g. fresh-install; used as the note tag.
     pub name: String,
-    pub topic: String,
+    /// Optional short catalog explanation. Self-explanatory tags usually need none.
+    /// Omit or use null for no description; blank text is invalid. Text is preserved.
+    pub description: Option<String>,
+    /// Optional Markdown usage instructions, separate from the catalog description.
     #[serde(default)]
     pub body: String,
+    /// Include the full guidance in startup context.
     #[serde(default)]
     pub read_on_start: bool,
+    /// Override configured privacy defaults; private tags use private:<name>.
     pub private: Option<bool>,
 }
 
