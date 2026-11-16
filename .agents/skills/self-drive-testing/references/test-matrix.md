@@ -2,7 +2,9 @@
 
 Build the case list from the tools and resources advertised by the server.
 Cover each new feature or behavior change with its affected workflows and failure
-paths.
+paths. For task, sheet, and v1alpha5 work, use the additional
+[task and sheet workflows](tasks-and-sheets.md); the usage guide is the behavior
+contract, while that reference describes verification cases.
 Record results under `.robostickies/private/runs/<run>/`; keep this reference
 reusable.
 For each case, retain its input and expected outcome with the observed result.
@@ -31,6 +33,7 @@ Exercise archive/restore, then delete the fixture sources.
 | Body hints | Recommended and arbitrary nonblank values; set/omit/clear; reject blank/conflicting/stale edits; preserve comments, nested metadata and newline style; legacy non-string hints survive unrelated edits and reject replacement/clear |
 | `update_note` | Revision is required; missing/null/blank/stale guards reject without source writes; omitted patch fields stay intact; empty tag list clears tags; current revision succeeds; archive/restore affects queries |
 | `list_notes` | Literal case-insensitive body search; AND tags; exclusions; all scopes/statuses; newest-first order; date boundaries; pagination without duplicates |
+| `list_tasks`, `render_task_sheet` | Use the task/sheet reference for graph closure, deferral, ordering, visibility, publication, migration, source preservation, and cache recovery |
 | `review_notes` | Public/active by default; schema omits paging; rejects limit/cursor; filters work across multiple internal pages; deterministic Markdown; private content/counts/diagnostics are absent |
 | Outcome lifecycle | Retain papercut/paperclip and visibility; resolved requires affected-environment verification; adopted requires reviewed scoped guidance and a recorded destination; edits and archive/read retain outcome tags; archived-tag queries find history |
 | `publish_note` | Source revision is required for preview and copy; stale guards create no copy; dry run writes no source; actual copy has a new ID; original remains; private tags and extra metadata disappear |

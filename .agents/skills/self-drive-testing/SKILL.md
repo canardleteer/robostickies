@@ -7,7 +7,9 @@ description: Exercise robostickies through its installed MCP server while improv
 
 Use the installed MCP connection as a user would. Read the repository instructions
 and [feature matrix](references/test-matrix.md). Refine this skill from observed
-behavior; keep run-specific results in the ignored private namespace.
+behavior; keep run-specific results in the ignored private namespace. For task,
+sheet, or v1alpha5 changes, also read the
+[task and sheet workflows](references/tasks-and-sheets.md).
 
 ## Start and record evidence
 
@@ -23,6 +25,8 @@ installation checkpoint before verifying changed behavior. A missing tool, old
 catalog, or mismatched build means the connection is unverified. The executable
 on disk and a child CLI's version do not identify an existing MCP process.
 Use one of the fresh-connection routes below rather than claiming an upgrade.
+When two installations share the same compiled fields, also attest the executable
+used by the running server; hashing only the current file on disk is insufficient.
 
 Self-drive observations, synthetic notes, fixture tag definitions, and run records
 are private by default. Use MCP `private: true` or CLI `--private` when creating
@@ -40,10 +44,13 @@ Discover the current tools and resources to catch newly added features. Use a
 unique run marker and a private testing tag for synthetic notes. Save the ledger
 and all copied responses under `.robostickies/private/runs/<run>/` in the checkout.
 Record returned IDs, revisions, current source paths, and fixture ownership,
-including untagged notes and publication copies. For each case, record the expected
-result before checking it. Identify the execution channel and keep failed or
+including untagged notes and publication copies. Keep full tool responses separate
+from ownership records; select a response by operation and UUID before reading its
+fields. For each case, record the expected result before checking it. Identify the execution channel and keep failed or
 pending checks visible; child-process success does not verify the agent's
-installed connection.
+installed connection. Keep case statuses current as their checks finish. Reserve
+time within the run deadline for fixture cleanup and a compact report; stop
+adding cases when that reserve is reached and leave unexecuted cases pending.
 
 Collect independent tool responses before persisting them, and serialize evidence
 writes against the latest case state. Use file/stream writes or bounded chunks for
@@ -66,7 +73,10 @@ Current stores need no migration for a package release; legacy stores can be
 healthy while recommending one. Respect optional deferrals and never migrate
 automatically. An undefined tag returns `not_found`, rather than a usage error.
 Creation and update return `note` inside an envelope, while `get_note` returns the
-note itself. Inspect Markdown to verify paths and frontmatter.
+note itself. Inspect Markdown to verify paths and frontmatter. Select fixtures by
+exact returned UUIDs: body search is a substring filter and does not identify one
+note. Treat product revisions as opaque guards. Use independent checksums to verify source
+bytes.
 
 Edits and publication, including previews, require `expected_revision` from the
 latest successful read or save; CLI update/archive/unarchive/publish require
@@ -86,8 +96,11 @@ Use synthetic markers for privacy tests.
 
 Browsing defaults to all visibility; review defaults to public. Test explicit
 scopes and compare public results with the public fixture set, including counts
-and diagnostics. Context/config resources and health reports are local inspection
-material. Use the scoped tools when preparing public output.
+and diagnostics. Task browsing defaults to all visibility; sheet rendering defaults
+to public. A private sheet is `not_found` outside its scope. A visible sheet may
+contain placeholders for members excluded by the selected row scope. Context/config
+resources and health reports are local inspection material. Use the scoped tools
+when preparing public output.
 
 Text search matches a case-insensitive literal substring of the body. Tag filters
 require every selected tag; exclusions reject any match. `since` is inclusive and
@@ -116,6 +129,12 @@ During source-preservation checks, keep parent note/tag/configuration/guidance
 edits paused until the testing process exits. Store evidence under the ignored run
 directory; record housekeeping findings afterward. Retain and attribute any final
 comparison difference rather than treating an earlier matching inventory as proof.
+
+Verify disruptive fixture setup before crediting a result: read manually authored
+YAML through the product and inspect the intended cache damage or failure
+precondition. A setup or assertion error is evidence about the testing process.
+Correct the check against the same saved responses or source bytes when possible, retaining
+the failed attempt and its adjudication separately.
 
 A `papercut` explains how to reproduce a problem and what should have happened.
 Describe the actual result and its cost, then suggest a correction if known.
