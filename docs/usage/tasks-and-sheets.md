@@ -125,6 +125,8 @@ sheets, or `--scope private` for private rows. Public members outside a private
 row scope remain placeholders; public prerequisite evidence can still explain
 private work. Missing, malformed, ambiguous, or out-of-scope items make the
 result incomplete and suppress the next-item recommendation.
+Each unavailable member is diagnosed once per sheet. Prerequisite errors in task
+sources are reported separately.
 
 Sheet patches replace membership with repeated `--item`, or `--clear-items`;
 `--ordering` changes presentation. MCP uses optional `items` and `ordering`.

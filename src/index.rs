@@ -335,11 +335,14 @@ impl Index {
             )?);
         }
         let mut relevant = BTreeSet::from([note.path.clone()]);
+        let mut unavailable_members = BTreeSet::new();
         for row in rows.iter().chain(&context) {
             if let Some(task) = &row.task {
                 relevant.insert(task.note.path.clone());
             }
-            if let Some(reason) = &row.unavailable {
+            if let Some(reason) = &row.unavailable
+                && unavailable_members.insert(row.id.as_str())
+            {
                 diagnostics.push(Diagnostic {
                     path: note.path.clone(),
                     code: reason.clone(),
@@ -348,12 +351,16 @@ impl Index {
                 });
             }
         }
+        // Scoped rows already diagnose unavailable members, including members
+        // also present in prerequisite context. Keep other source/graph errors
+        // without repeating the cached sheet-level resolution diagnostics.
         diagnostics.extend(
             self.diagnostics
                 .iter()
                 .filter(|d| {
                     relevant.contains(&d.path)
                         && (scope != Scope::Public || d.visibility == Visibility::Public)
+                        && !(d.path == note.path && d.code == "unresolved_reference")
                 })
                 .cloned(),
         );
