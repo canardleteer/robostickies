@@ -79,8 +79,9 @@ it does not disable the agent's own user configuration.
 For an additional isolated-store connection, add another child-only server entry
 with the same executable and an explicit owned temporary `--repo` directory.
 Record that directory for cleanup. Never retarget a running server by changing CWD.
-Supply complete command and argument settings for each added server. An entry that only sets
-`enabled = false` can fail configuration validation because it lacks a transport.
+Supply complete command and argument settings for each added server. An entry
+that only sets `enabled = false` can fail configuration validation because it
+lacks a transport.
 Nested CLI agents do not inherit the parent's per-invocation server overrides;
 pass the owned-root settings explicitly at each launch.
 

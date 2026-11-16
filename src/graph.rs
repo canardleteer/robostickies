@@ -211,7 +211,8 @@ pub(crate) fn stored_key(path: &str, id: &str) -> String {
     )
 }
 
-/// Body-free graph records. Cached identities include namespace to keep duplicates distinct.
+/// Graph records omit note bodies. Keys include the namespace to distinguish
+/// duplicate IDs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TaskRecord {
     pub id: String,
