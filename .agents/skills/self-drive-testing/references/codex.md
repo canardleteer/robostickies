@@ -66,6 +66,10 @@ codex exec --ephemeral --approve-for-me --cd "$qa_repo" --json \
   - < "$qa_run/task.md" > "$qa_run/events.jsonl" 2> "$qa_run/stderr.log"
 ```
 
+For an owned non-Git temporary repository, add `--skip-git-repo-check`. When the
+run directory is outside the child workspace, grant that exact evidence directory
+with `--add-dir`; do not broaden global trust.
+
 `--approve-for-me` routes approval requests through automatic review with the
 workspace-write sandbox. The MCP approval setting applies only to this child and
 the authorized test scope. Preserve review failures and follow the stated policy.
@@ -75,6 +79,15 @@ it does not disable the agent's own user configuration.
 For an additional isolated-store connection, add another child-only server entry
 with the same executable and an explicit owned temporary `--repo` directory.
 Record that directory for cleanup. Never retarget a running server by changing CWD.
+Supply complete command and argument settings for each added server. An entry that only sets
+`enabled = false` can fail configuration validation because it lacks a transport.
+Nested CLI agents do not inherit the parent's per-invocation server overrides;
+pass the owned-root settings explicitly at each launch.
+
+If the nested CLI fails during sandboxed client initialization, retain its launcher
+logs and use the native route or the execution policy's approved host launch.
+A bootstrap failure is not a product failure. Avoid repeating the same rejected
+launch, changing global trust, or adding bypass flags.
 
 Automated launchers should construct an argument array, serializing configuration
 values as TOML-compatible strings/arrays. Do not interpolate JSON into shell command
@@ -86,7 +99,15 @@ evidence files so a retry cannot overwrite the earlier transcript.
 On each actual connection, call `get_context` first and confirm the selected local
 repository. Then call `version` with empty arguments and compare all seven fields
 against the checkpoint. Recheck the executable hash separately as filesystem/CLI
-evidence. A CLI subprocess or a child-created substitute MCP client does not verify
+evidence. For successive dirty builds with identical fields, identify the stdio
+server process by its owned repository arguments and, on Linux, hash
+`/proc/<pid>/exe` against the checkpoint. This identifies the running executable
+even after its pathname has been replaced. If the process cannot be identified
+unambiguously, use a distinct clean build or leave the identity gate pending.
+An empty process scan inside a sandbox may reflect PID namespace isolation. Use
+policy-approved read-only host inspection of the owned server processes before
+concluding that they are missing or mismatched.
+A CLI subprocess or a child-created substitute MCP client does not verify
 the agent's actual connection. Inspect the JSONL tool events as well as its report.
 
 Only after this gate should the agent exercise changed behavior and explore for
@@ -100,7 +121,10 @@ Do not repeat successful creates or silently relabel failed assertions. The fail
 attempt remains infrastructure or product evidence according to its actual cause.
 
 After process exit, verify all owned notes, public copies, fixture definitions,
-and synthetic snapshots are absent. Recheck original source hashes, then remove
-owned temporary roots/installations. Record findings and outcome updates afterward.
+and synthetic snapshots are absent. Retained snapshots may cross filesystems;
+copy them to the private run directory, verify their contents, then remove the
+owned originals instead of assuming a rename works. Recheck original source
+hashes, then remove owned temporary roots/installations. Record findings and
+outcome updates afterward.
 This route verifies the new build without upgrading the parent's older connection;
 restart that older connection before relying on it for changed behavior.
