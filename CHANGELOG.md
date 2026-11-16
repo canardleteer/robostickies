@@ -2,6 +2,20 @@
 
 ## Unreleased — 0.3.0-rc.1 development baseline
 
+## [0.3.0-rc.2](https://github.com/canardleteer/robostickies/compare/v0.3.0-rc.1...v0.3.0-rc.2) - 2026-11-16
+
+### Added
+
+- add task notes and saved sheets
+
+### Fixed
+
+- deduplicate unavailable sheet member diagnostics
+
+### Other
+
+- tighten wording after prose review
+
 - Add structured tasks, prerequisite readiness, manual/dated deferral, and saved
   instruction sheets through the shared library, CLI, and MCP.
 - Add explicit `v1alpha5` migration with reserved-key collision checks, scoped
