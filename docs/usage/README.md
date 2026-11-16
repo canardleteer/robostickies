@@ -9,6 +9,7 @@ the guide for the task:
 | [Markdown storage](storage.md) | Edit source files and share them in Git |
 | [Private notes and configuration](privacy-and-configuration.md) | Keep the store local, configure TOML 1.1 defaults, or publish reviewed notes |
 | [Search and review](search-and-review.md) | Select matching notes and prepare a complete review |
+| [Tasks and saved sheets](tasks-and-sheets.md) | Query ready work, manage prerequisites and deferral, and render ordered instructions |
 | [Shared editing](shared-editing.md) | Reconcile conflicts between cooperating writers |
 | [Resolution and adoption](outcomes.md) | Record verification and adoption outcomes |
 | [MCP server](mcp.md) | Connect an agent, verify the running build, inspect startup advice, and configure approvals |

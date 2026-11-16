@@ -2,6 +2,13 @@
 
 ## Unreleased — 0.3.0-rc.1 development baseline
 
+- Add structured tasks, prerequisite readiness, manual/dated deferral, and saved
+  instruction sheets through the shared library, CLI, and MCP.
+- Add explicit `v1alpha5` migration with reserved-key collision checks, scoped
+  graph validation, compact redb graph records and secondary indexes. Ordinary
+  note responses retain their shape; Rust request literals gain optional fields.
+- Add task graph regressions, CLI/MCP parity, sheet rendering, and profiling.
+
 ## [0.3.0-rc.1](https://github.com/canardleteer/robostickies/compare/v0.2.0...v0.3.0-rc.1) - 2026-11-14
 
 ### Added

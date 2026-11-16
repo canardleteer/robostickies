@@ -341,7 +341,7 @@ mod tests {
         );
         assert!(
             validate_migration(
-                "format_version = 1\ndata_version = 'v1alpha4'\n",
+                "format_version = 1\ndata_version = 'v1alpha5'\n",
                 version::CURRENT.as_str()
             )
             .is_ok()

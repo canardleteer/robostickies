@@ -177,6 +177,18 @@ pub(crate) fn parse_note_for_version(
     version: crate::version::DataVersion,
 ) -> Result<Note> {
     let note = parse_note(text, path, physical)?;
+    if version.tasks() {
+        if note
+            .metadata
+            .get("task")
+            .is_some_and(|value| value.get("state").is_none())
+        {
+            return Err(invalid(
+                "Stored task metadata must explicitly contain state",
+            ));
+        }
+        crate::graph::validate_metadata(&note).map_err(|error| invalid(error.message))?;
+    }
     if version.requires_valid_tag_indentation() {
         let (yaml, _) = split(text)?;
         let document = noyalib::cst::parse_document(yaml).map_err(yaml_error)?;
@@ -265,8 +277,39 @@ pub(crate) fn render_note(note: &Note) -> Result<String> {
         status: note.status,
         metadata: note.metadata.clone(),
     };
-    let yaml = noyalib::to_string(&header).map_err(yaml_error)?;
+    let mut yaml = noyalib::to_string(&header).map_err(yaml_error)?;
+    if note
+        .metadata
+        .get("task")
+        .and_then(|task| task.get("deferral"))
+        .and_then(|d| d.get("until"))
+        .is_some()
+    {
+        let mut document = noyalib::cst::parse_document(&yaml).map_err(yaml_error)?;
+        quote_deferral(&mut document, note)?;
+        yaml = document.to_string();
+    }
     Ok(assemble(&yaml, &note.body))
+}
+
+fn quote_deferral(document: &mut noyalib::cst::Document, note: &Note) -> Result<()> {
+    if let Some(until) = note
+        .metadata
+        .get("task")
+        .and_then(|task| task.get("deferral"))
+        .and_then(|d| d.get("until"))
+        .and_then(Value::as_str)
+    {
+        // The default serializer correctly treats RFC3339 as a YAML 1.2 string,
+        // but the task storage contract also requires explicit quotation. Apply
+        // the supported quoting configuration to this scalar alone.
+        let config = noyalib::SerializerConfig::new().quote_all(true);
+        let fragment = noyalib::to_string_with_config(until, &config).map_err(yaml_error)?;
+        document
+            .set("task.deferral.until", fragment.trim_end_matches('\n'))
+            .map_err(yaml_error)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn render_tag(
@@ -472,6 +515,44 @@ pub(crate) fn patch_note(original: &str, note: &Note, patch: &UpdateNote) -> Res
     if let Some(hint) = &patch.body_format {
         set("body_format", YamlValue::String(hint.clone()))?;
     }
+    // Set nested fields through the pinned CST API so untouched task fields keep
+    // their comments and spelling. Cleared keys use the same preservation path below.
+    let before: NoteHeader = noyalib::from_str(yaml).map_err(yaml_error)?;
+    let mut remove = Vec::new();
+    for key in ["task", "sheet"] {
+        if before.metadata.get(key) == note.metadata.get(key) {
+            continue;
+        }
+        match note.metadata.get(key) {
+            None => remove.push(key.to_owned()),
+            Some(value) => {
+                if let (Some(old), Some(new)) = (
+                    before.metadata.get(key).and_then(Value::as_object),
+                    value.as_object(),
+                ) {
+                    for (field, value) in new {
+                        if old.get(field) != Some(value) {
+                            set(
+                                &format!("{key}.{field}"),
+                                noyalib::to_value(value).map_err(yaml_error)?,
+                            )?;
+                        }
+                    }
+                    for field in old.keys().filter(|field| !new.contains_key(*field)) {
+                        remove.push(format!("{key}.{field}"));
+                    }
+                } else {
+                    set(key, noyalib::to_value(value).map_err(yaml_error)?)?;
+                }
+            }
+        }
+    }
+    for key in remove {
+        document
+            .set_path(&key, &YamlValue::Null)
+            .map_err(yaml_error)?;
+        document.remove(&key).map_err(yaml_error)?;
+    }
     if patch.clear_body_format && document.get("body_format").is_some() {
         // remove in 0.0.58 can strand comment-shaped block scalar content as
         // YAML comments. Empty the value first; the CST owns both operations.
@@ -479,6 +560,13 @@ pub(crate) fn patch_note(original: &str, note: &Note, patch: &UpdateNote) -> Res
             .set_value("body_format", &YamlValue::Null)
             .map_err(yaml_error)?;
         document.remove("body_format").map_err(yaml_error)?;
+    }
+    if patch
+        .task
+        .as_ref()
+        .is_some_and(|task| task.deferral.is_some())
+    {
+        quote_deferral(&mut document, note)?;
     }
     let mut retained = yaml_comments(&document);
     let mut displaced = String::new();

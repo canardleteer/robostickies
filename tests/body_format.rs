@@ -6,6 +6,8 @@ use serde_json::json;
 fn create(store: &Store, hint: Option<&str>) -> Note {
     store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body: "answer: 42\n".into(),
             body_format: hint.map(str::to_owned),
             tags: vec![],
@@ -98,6 +100,8 @@ fn hints_are_advisory_strings_and_edits_support_set_clear_and_revision_guards() 
     assert_eq!(
         store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body: "body".into(),
                 body_format: Some("\n\t".into()),
                 tags: vec![],
@@ -238,6 +242,8 @@ fn publication_strips_the_source_hint_and_accepts_only_an_explicit_public_hint()
         for hint in [None, Some("text")] {
             let publication = store
                 .publish_note(PublishNote {
+                    task: None,
+                    sheet: None,
                     id: note.id.clone(),
                     dry_run,
                     body: Some("Reviewed UTF-8 prose ☕".into()),

@@ -40,7 +40,7 @@ fn sources(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 fn write_config(store: &Store, version: Option<&str>) {
-    if !version.is_some_and(|value| value.contains("v1alpha4")) {
+    if !version.is_some_and(|value| value.contains("v1alpha4") || value.contains("v1alpha5")) {
         for directory in ["tags", "private/tags"] {
             if let Ok(entries) = fs::read_dir(store.directory().join(directory)) {
                 for entry in entries {
@@ -60,6 +60,8 @@ fn write_config(store: &Store, version: Option<&str>) {
 fn legacy_note(store: &Store, private: bool, tags: &str, newline: &str) -> Note {
     let note = store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body: "Migration fixture".into(),
             body_format: None,
             tags: vec![],
@@ -88,6 +90,8 @@ fn v1alpha3_repairs_only_versioned_sources_and_leaves_cache_values_and_unaffecte
             }
             let valid = store
                 .create_note(CreateNote {
+                    task: None,
+                    sheet: None,
                     body: "Unchanged valid fixture".into(),
                     body_format: None,
                     tags: vec![],
@@ -121,7 +125,7 @@ fn v1alpha3_repairs_only_versioned_sources_and_leaves_cache_values_and_unaffecte
             assert_eq!(sources(temp.path()), before);
             let preview = store.upgrade(true).unwrap();
             assert_eq!(preview.source_version.as_str(), "v1alpha2");
-            assert_eq!(preview.target_version.as_str(), "v1alpha4");
+            assert_eq!(preview.target_version.as_str(), "v1alpha5");
             assert!(preview.dry_run && !preview.wrote && preview.snapshot.is_none());
             assert_eq!(sources(temp.path()), before);
             assert_eq!(fs::read(&index).ok(), cache_before);
@@ -139,7 +143,7 @@ fn v1alpha3_repairs_only_versioned_sources_and_leaves_cache_values_and_unaffecte
             let config = PathBuf::from(".robostickies/config.toml");
             let text = String::from_utf8(expected[&config].clone())
                 .unwrap()
-                .replace("'v1alpha2'", "\"v1alpha4\"");
+                .replace("'v1alpha2'", "\"v1alpha5\"");
             expected.insert(config, text.into_bytes());
             for note in &notes {
                 let path = Path::new(".robostickies").join(&note.path);
@@ -273,6 +277,8 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             for private in [false, true] {
                 let saved = store
                     .create_note(CreateNote {
+                        task: None,
+                        sheet: None,
                         body_format: None,
                         body: "Migration fixture".into(),
                         tags: vec!["papercut".into()],
@@ -349,9 +355,9 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             }
             expected.remove(Path::new(".robostickies/config.toml"));
             assert_eq!(after, expected);
-            assert!(migrated.contains("data_version = \"v1alpha4\""));
+            assert!(migrated.contains("data_version = \"v1alpha5\""));
             assert_eq!(
-                migrated.replace(&format!("data_version = \"v1alpha4\"{line_ending}"), ""),
+                migrated.replace(&format!("data_version = \"v1alpha5\"{line_ending}"), ""),
                 original_config
             );
             for old in &notes {
@@ -373,6 +379,8 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
             let original = store.get_note(&notes[1].id).unwrap();
             let publication = store
                 .publish_note(PublishNote {
+                    task: None,
+                    sheet: None,
                     body_format: None,
                     id: original.id.clone(),
                     body: Some("Reviewed migration fixture".into()),
@@ -406,7 +414,13 @@ fn upgrades_preserve_sources_revisions_privacy_and_customizations_with_all_cache
 
 #[test]
 fn explicit_versions_and_config_only_stores_upgrade_without_scaffolding() {
-    for version in ["'v1alpha1'", "'v1alpha2'", "'v1alpha3'", "'v1alpha4'"] {
+    for version in [
+        "'v1alpha1'",
+        "'v1alpha2'",
+        "'v1alpha3'",
+        "'v1alpha4'",
+        "'v1alpha5'",
+    ] {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::with_user_config(temp.path(), None).unwrap();
         fs::create_dir(store.directory()).unwrap();
@@ -415,9 +429,9 @@ fn explicit_versions_and_config_only_stores_upgrade_without_scaffolding() {
         assert!(!store.upgrade(true).unwrap().wrote);
         let result = store.upgrade(false).unwrap();
         let after = fs::read_to_string(store.directory().join("config.toml")).unwrap();
-        if !version.contains("alpha4") {
+        if !version.contains("alpha5") {
             assert!(result.wrote);
-            assert_eq!(after, before.replace(version, "\"v1alpha4\""));
+            assert_eq!(after, before.replace(version, "\"v1alpha5\""));
         } else {
             assert!(!result.wrote);
             assert_eq!(before, after);
@@ -497,6 +511,8 @@ fn user_and_private_version_overrides_are_forbidden_even_when_equal() {
             assert_eq!(
                 store
                     .create_note(CreateNote {
+                        task: None,
+                        sheet: None,
                         body_format: None,
                         body: "Rejected write".into(),
                         tags: vec![],
@@ -529,6 +545,8 @@ fn concurrent_upgrades_and_writers_share_the_operation_lock() {
                 } else {
                     store
                         .create_note(CreateNote {
+                            task: None,
+                            sheet: None,
                             body_format: None,
                             body: format!("Concurrent migration writer {i}"),
                             tags: vec![],

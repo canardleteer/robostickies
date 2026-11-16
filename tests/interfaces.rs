@@ -308,6 +308,253 @@ async fn cli(repo: &Path, args: &[&str]) -> Value {
 }
 
 #[tokio::test]
+async fn tasks_and_sheets_interoperate_with_matching_filters_edits_and_publication() {
+    tokio::time::timeout(Duration::from_secs(45), async {
+        let root = tempfile::tempdir().unwrap();
+        let client = start_mcp(root.path()).await;
+        call_mcp(&client,"init_store",json!({})).await;
+        let a = cli(root.path(),&["add","Schema","--task"]).await["note"].clone();
+        let id_a = a["id"].as_str().unwrap();
+        let b = call_mcp(&client,"create_note",json!({"body":"Migration","task":{"requires":[id_a]}})).await["note"].clone();
+        let id_b = b["id"].as_str().unwrap();
+        assert_eq!(cli(root.path(),&["get",id_b]).await,b);
+        let c = cli(root.path(),&["add","Guide","--task","--defer","--private"]).await["note"].clone();
+        let id_c = c["id"].as_str().unwrap();
+        let plan = call_mcp(&client,"create_note",json!({"body":"Implementation instructions","private":true,
+            "sheet":{"items":[id_b,id_a,id_c],"ordering":"preferred"}})).await["note"].clone();
+        let id_plan = plan["id"].as_str().unwrap();
+        let cli_sheet = cli(root.path(),&["sheets","render",id_plan,"--scope","all"]).await;
+        let mcp_sheet = call_mcp(&client,"render_task_sheet",json!({"id":id_plan,"scope":"all"})).await;
+        for field in ["rows","context","diagnostics","complete","next_task","note","sheet","scope"] { assert_eq!(cli_sheet[field],mcp_sheet[field],"{field}"); }
+        assert_eq!(mcp_sheet["next_task"],id_a);
+        assert_eq!(error_mcp(&client,"render_task_sheet",json!({"id":id_plan})).await["error"]["code"],"not_found");
+        for (flags,input) in [
+            (vec!["--ready"],json!({"ready":true})),
+            (vec!["--blocked","--scope","public"],json!({"blocked":true,"scope":"public"})),
+            (vec!["--deferred"],json!({"deferred":true})),
+            (vec!["--ready=false","--deferred=false"],json!({"ready":false,"deferred":false})),
+            (vec!["--all-task-states","--status","all","--tag","paperclip"],json!({"all_task_states":true,"status":"all","tags":["paperclip"]})),
+            (vec!["--state","todo","--text","MIGRATION","--limit","1"],json!({"states":["todo"],"text":"MIGRATION","limit":1})),
+        ] {
+            let mut args = vec!["tasks","list"];args.extend(flags);
+            let cli_page = cli(root.path(),&args).await;
+            let mcp_page = call_mcp(&client,"list_tasks",input).await;
+            for field in ["tasks","total","diagnostics","next_cursor"] {assert_eq!(cli_page[field],mcp_page[field],"{args:?} {field}");}
+        }
+        let a = call_mcp(&client,"update_note",json!({"id":id_a,"expected_revision":a["revision"],"task":{"state":"done"}})).await["note"].clone();
+        let b = cli(root.path(),&["update",id_b,"--task-state","in_progress","--if-match",b["revision"].as_str().unwrap()]).await["note"].clone();
+        assert_eq!(call_mcp(&client,"list_tasks",json!({"ready":true,"scope":"public"})).await["tasks"][0]["note"],b);
+        let c = call_mcp(&client,"get_note",json!({"id":id_c})).await;
+        let c = cli(root.path(),&["update",id_c,"--resume-task","--if-match",c["revision"].as_str().unwrap()]).await["note"].clone();
+        let c = call_mcp(&client,"update_note",json!({"id":id_c,"expected_revision":c["revision"],"task":{"deferral":{"kind":"until","until":"2040-01-01"}}})).await["note"].clone();
+        let c = cli(root.path(),&["update",id_c,"--task-state","cancelled","--if-match",c["revision"].as_str().unwrap()]).await["note"].clone();
+        assert!(c["metadata"]["task"].get("deferral").is_none());
+        let preview = cli(root.path(),&["publish",id_c,"--dry-run","--task","--requires",id_a,"--if-match",c["revision"].as_str().unwrap()]).await;
+        assert_eq!(preview["note"]["metadata"]["task"]["requires"],json!([id_a]));
+        let published = call_mcp(&client,"publish_note",json!({"id":id_c,"expected_revision":c["revision"],"task":{"state":"todo","requires":[id_a]}})).await;
+        assert_eq!(published["note"]["metadata"],preview["note"]["metadata"]);
+        assert_eq!(call_mcp(&client,"publish_note",json!({"id":id_c,"expected_revision":c["revision"]})).await["note"]["metadata"],json!({}));
+        let plan = cli(root.path(),&["update",id_plan,"--clear-items","--ordering","display","--if-match",plan["revision"].as_str().unwrap()]).await["note"].clone();
+        let plan = call_mcp(&client,"update_note",json!({"id":id_plan,"expected_revision":plan["revision"],"clear_sheet":true})).await["note"].clone();
+        let plan = cli(root.path(),&["update",id_plan,"--task","--requires",id_a,"--if-match",plan["revision"].as_str().unwrap()]).await["note"].clone();
+        let plan = cli(root.path(),&["update",id_plan,"--clear-requires","--if-match",plan["revision"].as_str().unwrap()]).await["note"].clone();
+        let plan = call_mcp(&client,"update_note",json!({"id":id_plan,"expected_revision":plan["revision"],"clear_task":true})).await["note"].clone();
+        assert!(plan["metadata"].get("task").is_none());
+        assert_eq!(error_mcp(&client,"update_note",json!({"id":id_a,"expected_revision":"stale","task":{"state":"todo"}})).await["error"]["code"],"conflict");
+        assert_eq!(cli(root.path(),&["get",id_a]).await,a);
+        client.cancel().await.unwrap();
+        let restarted = start_mcp(root.path()).await;
+        assert_eq!(call_mcp(&restarted,"list_tasks",json!({"all_task_states":true})).await["total"],4);
+        restarted.cancel().await.unwrap();
+    }).await.expect("task interoperability timed out");
+}
+
+#[tokio::test]
+async fn task_cli_and_mcp_reject_invalid_requests_without_mutations() {
+    tokio::time::timeout(Duration::from_secs(30),async {
+        let root = tempfile::tempdir().unwrap();
+        let client = start_mcp(root.path()).await;
+        call_mcp(&client,"init_store",json!({})).await;
+        let note = cli(root.path(),&["add","Task","--task"]).await["note"].clone();
+        let id = note["id"].as_str().unwrap();let revision=note["revision"].as_str().unwrap();
+        for (flags,input,tool) in [
+            (vec!["add","Invalid","--task","--requires","bad"],json!({"body":"Invalid","task":{"requires":["bad"]}}),"create_note"),
+            (vec!["add","Invalid","--task","--task-state","done","--defer"],json!({"body":"Invalid","task":{"state":"done","deferral":{"kind":"manual"}}}),"create_note"),
+            (vec!["update",id,"--clear-task","--if-match",revision,"--task-state","done"],json!({"id":id,"expected_revision":revision,"clear_task":true,"task":{"state":"done"}}),"update_note"),
+            (vec!["tasks","list","--limit","0"],json!({"limit":0}),"list_tasks"),
+            (vec!["tasks","list","--since","bad"],json!({"since":"bad"}),"list_tasks"),
+            (vec!["tasks","list","--since","2030-01-02","--until","2030-01-01"],json!({"since":"2030-01-02","until":"2030-01-01"}),"list_tasks"),
+            (vec!["tasks","list","--cursor","bad"],json!({"cursor":"bad"}),"list_tasks"),
+            (vec!["tasks","list","--state","todo","--all-task-states"],json!({"states":["todo"],"all_task_states":true}),"list_tasks"),
+            (vec!["sheets","render","bad"],json!({"id":"bad"}),"render_task_sheet"),
+            (vec!["update",id,"--requires",id,"--if-match",revision],json!({"id":id,"expected_revision":revision,"task":{"requires":[id]}}),"update_note"),
+        ] {
+            let output = command(root.path()).args(flags).bounded_output().await.unwrap();
+            assert!(!output.status.success());
+            let mcp = error_mcp(&client,tool,input).await;
+            if output.status.code() != Some(2) {
+                assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],mcp["error"]["code"]);
+            }
+        }
+        for input in [json!({"task":null}),json!({"task":{"requires":null}}),json!({"task":{"deferral":null}}),json!({"task":{"state":null}}),json!({"sheet":{"items":null}}),json!({"task":{"deferral":{"kind":"manual","until":"2040-01-01"}}})] {
+            let mut args = json!({"id":id,"expected_revision":revision});args.as_object_mut().unwrap().extend(input.as_object().unwrap().clone());
+            let result = client.call_tool(CallToolRequestParams::new("update_note").with_arguments(args.as_object().unwrap().clone())).await.unwrap();
+            assert_eq!(result.is_error,Some(true),"{input}");
+        }
+        assert_eq!(cli(root.path(),&["get",id]).await,note);
+        client.cancel().await.unwrap();
+    }).await.expect("task validation parity timed out");
+}
+
+#[tokio::test]
+async fn concurrent_reciprocal_task_edges_cannot_commit_a_cycle() {
+    tokio::time::timeout(Duration::from_secs(40),async {
+        let root = tempfile::tempdir().unwrap();
+        let client = start_mcp(root.path()).await;
+        call_mcp(&client,"init_store",json!({})).await;
+        let other = start_mcp(root.path()).await;
+        let a = call_mcp(&client,"create_note",json!({"body":"A","task":{}})).await["note"].clone();
+        let b = call_mcp(&other,"create_note",json!({"body":"B","task":{}})).await["note"].clone();
+        async fn update(client: &RunningService<RoleClient,()>,note: &Value,target: &Value) -> rmcp::model::CallToolResult {
+            for attempt in 0..3 {
+                let result = client.call_tool(CallToolRequestParams::new("update_note").with_arguments(json!({"id":note["id"],"expected_revision":note["revision"],"task":{"requires":[target["id"]]}}).as_object().unwrap().clone())).await.unwrap();
+                if result.structured_content.as_ref().is_some_and(|v| v["error"]["code"]=="busy") && attempt<2 {continue;}
+                return result;
+            }
+            unreachable!()
+        }
+        let (first,second) = tokio::join!(update(&client,&a,&b),update(&other,&b,&a));
+        assert_eq!(usize::from(first.is_error!=Some(true))+usize::from(second.is_error!=Some(true)),1);
+        let failed = if first.is_error==Some(true) {first} else {second};
+        assert_eq!(failed.structured_content.unwrap()["error"]["code"],"invalid_input");
+        assert_eq!(call_mcp(&client,"validate_store",json!({})).await["healthy"],true);
+        // A CLI writer uses the same lock and current graph.
+        let a = call_mcp(&client,"get_note",json!({"id":a["id"]})).await;
+        let b = call_mcp(&client,"get_note",json!({"id":b["id"]})).await;
+        let (source,target) = if a["metadata"]["task"]["requires"]==json!([]) {(&a,&b)} else {(&b,&a)};
+        let output=command(root.path()).args(["update",source["id"].as_str().unwrap(),"--requires",target["id"].as_str().unwrap(),"--if-match",source["revision"].as_str().unwrap()]).bounded_output().await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],"invalid_input");
+        client.cancel().await.unwrap();other.cancel().await.unwrap();
+    }).await.expect("reciprocal task edits timed out");
+}
+
+#[tokio::test]
+async fn human_task_output_includes_states_blockers_pagination_and_sheet_instructions() {
+    tokio::time::timeout(Duration::from_secs(25), async {
+        let root = tempfile::tempdir().unwrap();
+        cli(root.path(), &["init"]).await;
+        let a = cli(root.path(), &["add", "First instructions", "--task"]).await["note"].clone();
+        let b = cli(
+            root.path(),
+            &[
+                "add",
+                "Second instructions",
+                "--task",
+                "--requires",
+                a["id"].as_str().unwrap(),
+            ],
+        )
+        .await["note"]
+            .clone();
+        let sheet = cli(
+            root.path(),
+            &[
+                "add",
+                "Sheet instructions",
+                "--sheet",
+                "--item",
+                b["id"].as_str().unwrap(),
+                "--item",
+                a["id"].as_str().unwrap(),
+                "--ordering",
+                "preferred",
+            ],
+        )
+        .await["note"]
+            .clone();
+        let empty = cli(root.path(), &["add", "Empty sheet", "--sheet"]).await["note"].clone();
+        assert_eq!(empty["metadata"]["sheet"]["items"], json!([]));
+        let b = cli(
+            root.path(),
+            &[
+                "update",
+                b["id"].as_str().unwrap(),
+                "--defer-until",
+                "2040-01-01",
+                "--if-match",
+                b["revision"].as_str().unwrap(),
+            ],
+        )
+        .await["note"]
+            .clone();
+        async fn human(root: &Path, args: &[&str]) -> String {
+            let result = Command::new(env!("CARGO_BIN_EXE_robostickies"))
+                .args(["--repo", root.to_str().unwrap(), "--no-user-config"])
+                .args(args)
+                .bounded_output()
+                .await
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            String::from_utf8(result.stdout).unwrap()
+        }
+        let output = human(root.path(), &["tasks", "list", "--limit", "1"]).await;
+        for needle in [
+            "Tasks: 2",
+            "Evaluated at:",
+            "Next cursor:",
+            "blocked=true",
+            "deferred=true",
+            "Second instructions",
+            a["id"].as_str().unwrap(),
+            b["id"].as_str().unwrap(),
+        ] {
+            assert!(output.contains(needle), "{output}");
+        }
+        let output = human(
+            root.path(),
+            &["sheets", "render", sheet["id"].as_str().unwrap()],
+        )
+        .await;
+        for needle in [
+            "Sheet instructions",
+            "First instructions",
+            "Second instructions",
+            "Next suggested task:",
+            "Deferred until",
+            "read-only",
+        ] {
+            assert!(output.contains(needle), "{output}");
+        }
+        let path = root
+            .path()
+            .join(".robostickies")
+            .join(a["path"].as_str().unwrap());
+        fs::write(
+            path,
+            fs::read_to_string(
+                root.path()
+                    .join(".robostickies")
+                    .join(a["path"].as_str().unwrap()),
+            )
+            .unwrap()
+            .replace("state: todo", "state: invalid"),
+        )
+        .unwrap();
+        assert!(
+            human(root.path(), &["tasks", "list"])
+                .await
+                .contains("Invalid task metadata")
+        );
+    })
+    .await
+    .expect("human task output timed out");
+}
+
+#[tokio::test]
 async fn cli_round_trip_stdin_search_archive_and_publish() {
     let temp = tempfile::tempdir().unwrap();
     cli(temp.path(), &["init"]).await;
@@ -490,13 +737,13 @@ async fn every_mcp_tool_rejects_unknown_arguments_before_running() {
         let mut open_schemas = vec![];
         for tool in &tools {
             let mut arguments = match tool.name.as_ref() {
-                "get_note" => json!({"id": id}),
+                "get_note" | "render_task_sheet" => json!({"id": id}),
                 "get_tag" => json!({"name": "papercut"}),
                 "create_note" => json!({"body": "Unexpected note"}),
                 "update_note" => json!({"id": id, "body": "Unexpected edit", "expected_revision": saved["note"]["revision"]}),
                 "publish_note" => json!({"id": id, "dry_run": true, "expected_revision": saved["note"]["revision"]}),
                 "create_tag" => json!({"name": "unexpected", "description": "Unexpected tag"}),
-                "get_context" | "init_store" | "list_notes" | "review_notes" | "list_tags"
+                "get_context" | "init_store" | "list_notes" | "list_tasks" | "review_notes" | "list_tags"
                 | "get_config" | "validate_store" | "rebuild_index" | "upgrade_store" | "version" => json!({}),
                 name => panic!("Add a valid input for the new tool {name}"),
             };
@@ -815,10 +1062,11 @@ async fn startup_discovery_directs_agents_to_advice_independently_of_health() {
             ("v1alpha1", "should"),
             ("v1alpha2", "should"),
             ("v1alpha3", "should"),
-            ("v1alpha4", "none"),
+            ("v1alpha4", "should"),
+            ("v1alpha5", "none"),
         ] {
-            set_tag_format(temp.path(), source != "v1alpha4");
-            fs::write(&config, original.replace("v1alpha4", source)).unwrap();
+            set_tag_format(temp.path(), !matches!(source, "v1alpha4" | "v1alpha5"));
+            fs::write(&config, original.replace("v1alpha5", source)).unwrap();
             let context = call_mcp(&client, "get_context", json!({})).await;
             let health = call_mcp(&client, "validate_store", json!({})).await;
             assert_eq!(health["healthy"], true);
@@ -941,7 +1189,7 @@ async fn yaml_edits_keep_comments_and_values_through_cli_and_mcp() {
                         // Legacy encodings are repaired only by the explicit upgrade.
                         let config = directory.join("config.toml");
                         set_tag_format(temp.path(), true);
-                        fs::write(&config, fs::read_to_string(&config).unwrap().replace("v1alpha4", "v1alpha2")).unwrap();
+                        fs::write(&config, fs::read_to_string(&config).unwrap().replace("v1alpha5", "v1alpha2")).unwrap();
                         let legacy = call_mcp(&client,"get_note",json!({"id":id})).await;
                         assert_eq!(error_mcp(&client,"update_note",json!({"id":id,"expected_revision":legacy["revision"],"body":"No implicit repair"})).await["error"]["code"],"invalid_document");
                         for dry in [true, false] {
@@ -1639,7 +1887,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let client = start_mcp(temp.path()).await;
         assert_eq!(error_mcp(&client, "upgrade_store", json!({})).await["error"]["code"], "not_initialized");
         call_mcp(&client, "init_store", json!({})).await;
-        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha4");
+        assert_eq!(call_mcp(&client, "get_context", json!({})).await["data_version"], "v1alpha5");
         let config = temp.path().join(".robostickies/config.toml");
         let legacy = "\u{feff}# Preserve team settings\nformat_version = 1\n\n[tags]\ndefault_private = false\n";
         set_tag_format(temp.path(), true);
@@ -1672,7 +1920,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         let original = fs::read(&path).unwrap();
         let preview = call_mcp(&client, "upgrade_store", json!({"dry_run": true})).await;
         assert_eq!(preview["source_version"], "v1alpha1");
-        assert_eq!(preview["target_version"], "v1alpha4");
+        assert_eq!(preview["target_version"], "v1alpha5");
         assert_eq!(preview["wrote"], false);
         assert_eq!(preview["dry_run"], true);
         assert_eq!(preview["snapshot"], Value::Null);
@@ -1692,7 +1940,7 @@ async fn legacy_cli_and_fresh_mcp_upgrade_without_changing_note_envelopes() {
         assert_eq!(call_mcp(&client, "get_note", json!({"id":id})).await["revision"], saved["note"]["revision"]);
         for name in ["get_context", "get_config", "validate_store"] {
             let value = call_mcp(&second, name, json!({})).await;
-            assert_eq!(value["data_version"], "v1alpha4");
+            assert_eq!(value["data_version"], "v1alpha5");
             assert_eq!(value["upgrade_available"], false);
         }
         let output = command(temp.path()).args(["config", "show"]).bounded_output().await.unwrap();

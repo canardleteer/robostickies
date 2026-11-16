@@ -5,12 +5,16 @@ use std::{
 };
 
 use redb::{
-    Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, ReadableTableMetadata,
-    TableDefinition,
+    Database, MultimapTableDefinition, ReadableDatabase, ReadableMultimapTable, ReadableTable,
+    ReadableTableMetadata, TableDefinition,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{document, model::*};
+use crate::{
+    document,
+    graph::{self, Evaluator, Graph},
+    model::*,
+};
 
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files_v1");
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes_v1");
@@ -18,7 +22,17 @@ const TAGS: TableDefinition<&str, &[u8]> = TableDefinition::new("tags_v1");
 const FILTERS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("filters_v1");
 const DATES: TableDefinition<&str, &str> = TableDefinition::new("dates_v1");
 const METADATA: TableDefinition<&str, u64> = TableDefinition::new("metadata_v1");
-const GENERATION: u64 = 3;
+const GENERATION: u64 = 4;
+const TASKS: TableDefinition<&str, &[u8]> = TableDefinition::new("tasks_v1");
+const SHEETS: TableDefinition<&str, &[u8]> = TableDefinition::new("sheets_v1");
+const IDENTITIES: TableDefinition<&str, &[u8]> = TableDefinition::new("identities_v1");
+const TASK_FILTERS: MultimapTableDefinition<&str, &str> =
+    MultimapTableDefinition::new("task_filters_v1");
+const REQUIRES: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("requires_v1");
+const REQUIRED_BY: MultimapTableDefinition<&str, &str> =
+    MultimapTableDefinition::new("required_by_v1");
+const MEMBER_OF: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("member_of_v1");
+const DEFERRALS: TableDefinition<&str, &str> = TableDefinition::new("deferrals_v1");
 
 #[derive(Clone, Serialize, Deserialize)]
 enum Entity {
@@ -40,6 +54,365 @@ pub(crate) struct Index {
 }
 
 impl Index {
+    /// Load compact graph data without hydrating any note bodies.
+    pub fn graph(&self) -> anyhow::Result<Graph> {
+        let tx = self.db.begin_read()?;
+        let tasks = tx.open_table(TASKS)?;
+        let sheets = tx.open_table(SHEETS)?;
+        let identities = tx.open_table(IDENTITIES)?;
+        let mut graph = Graph::default();
+        for row in tasks.iter()? {
+            let (key, value) = row?;
+            graph
+                .tasks
+                .insert(key.value().into(), serde_json::from_slice(value.value())?);
+        }
+        for row in sheets.iter()? {
+            let (key, value) = row?;
+            graph
+                .sheets
+                .insert(key.value().into(), serde_json::from_slice(value.value())?);
+        }
+        for row in identities.iter()? {
+            let (key, value) = row?;
+            graph
+                .identities
+                .insert(key.value().into(), serde_json::from_slice(value.value())?);
+        }
+        for (definition, incoming) in [
+            (REQUIRED_BY, &mut graph.incoming_tasks),
+            (MEMBER_OF, &mut graph.incoming_sheets),
+        ] {
+            for row in tx.open_multimap_table(definition)?.iter()? {
+                let (key, values) = row?;
+                let sources = values
+                    .map(|value| value.map(|value| value.value().to_owned()))
+                    .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+                incoming.insert(key.value().into(), sources);
+            }
+        }
+        Ok(graph)
+    }
+
+    fn note(&self, id: &str) -> anyhow::Result<Option<Note>> {
+        let tx = self.db.begin_read()?;
+        tx.open_table(NOTES)?
+            .get(id)?
+            .map(|value| serde_json::from_slice(value.value()).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn list_tasks(
+        &self,
+        input: &TaskQuery,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<TaskPage> {
+        let query = &input.notes;
+        validate_query(query)?;
+        if input.all_task_states && !input.states.is_empty() {
+            return Err(Error::new("invalid_input", "states and all_task_states conflict").into());
+        }
+        let graph = self.graph()?;
+        let scope = query.scope.unwrap_or(Scope::All);
+        let tx = self.db.begin_read()?;
+        let filters = tx.open_multimap_table(TASK_FILTERS)?;
+        let select = |key: &str| -> anyhow::Result<BTreeSet<String>> {
+            filters
+                .get(key)?
+                .map(|row| row.map(|v| v.value().to_owned()).map_err(Into::into))
+                .collect()
+        };
+        let states = if input.all_task_states {
+            vec![
+                TaskState::Todo,
+                TaskState::InProgress,
+                TaskState::Done,
+                TaskState::Cancelled,
+            ]
+        } else if input.states.is_empty() {
+            vec![TaskState::Todo, TaskState::InProgress]
+        } else {
+            input.states.clone()
+        };
+        let mut candidates = BTreeSet::new();
+        for state in states {
+            candidates.extend(select(&format!("state:{}", state.as_str()))?);
+        }
+        let mut required = query
+            .tags
+            .iter()
+            .map(|t| format!("tag:{t}"))
+            .collect::<Vec<_>>();
+        if scope != Scope::All {
+            required.push(format!(
+                "scope:{}",
+                if scope == Scope::Public {
+                    "public"
+                } else {
+                    "private"
+                }
+            ));
+        }
+        if query.status != StatusFilter::All {
+            required.push(format!(
+                "status:{}",
+                if query.status == StatusFilter::Active {
+                    "active"
+                } else {
+                    "archived"
+                }
+            ));
+        }
+        for filter in required {
+            candidates = candidates
+                .intersection(&select(&filter)?)
+                .cloned()
+                .collect();
+        }
+        for tag in &query.exclude_tags {
+            candidates = candidates
+                .difference(&select(&format!("tag:{tag}"))?)
+                .cloned()
+                .collect();
+        }
+        if let Some(deferred) = input.deferred {
+            let mut waiting = select("deferral:manual")?;
+            let lower = format!("{}/~", at.format("%Y-%m-%dT%H:%M:%S%.9fZ"));
+            for row in tx.open_table(DEFERRALS)?.range(lower.as_str()..)? {
+                waiting.insert(row?.1.value().into());
+            }
+            candidates = if deferred {
+                candidates.intersection(&waiting).cloned().collect()
+            } else {
+                candidates.difference(&waiting).cloned().collect()
+            };
+        }
+        let since = query
+            .since
+            .as_deref()
+            .map(document::date_bound)
+            .transpose()?;
+        let until = query
+            .until
+            .as_deref()
+            .map(document::date_bound)
+            .transpose()?;
+        let needle = query.text.as_ref().map(|s| s.to_lowercase());
+        let mut evaluator = Evaluator::new(&graph, at);
+        let mut matched = Vec::new();
+        for identity in candidates {
+            let Some(record) = graph.tasks.get(&identity) else {
+                continue;
+            };
+            let public = scope == Scope::Public || record.visibility == Visibility::Public;
+            if scope != Scope::Public
+                && record.visibility == Visibility::Private
+                && graph
+                    .identities
+                    .get(&record.id)
+                    .is_some_and(|ids| ids.len() != 1)
+            {
+                continue;
+            }
+            let created = document::timestamp(&record.created_at)?;
+            if since.is_some_and(|bound| created < bound)
+                || until.is_some_and(|bound| created >= bound)
+            {
+                continue;
+            }
+            let summary = evaluator.summary(&record.id, public);
+            let deferred = record.task.deferral.as_ref().is_some_and(|d| match d {
+                Deferral::Manual => true,
+                Deferral::Until { until } => {
+                    document::timestamp(until).is_ok_and(|until| at < until)
+                }
+            });
+            let blocked = !summary.blockers.is_empty();
+            let ready = record.status == NoteStatus::Active
+                && !record.task.state.terminal()
+                && !deferred
+                && !blocked;
+            if input.ready.is_some_and(|v| v != ready)
+                || input.blocked.is_some_and(|v| v != blocked)
+                || input.deferred.is_some_and(|v| v != deferred)
+            {
+                continue;
+            }
+            // Bodies are only needed for literal text matching and the returned page.
+            if let Some(needle) = &needle
+                && self
+                    .note(&record.id)?
+                    .is_none_or(|note| !note.body.to_lowercase().contains(needle))
+            {
+                continue;
+            }
+            matched.push((
+                format!("{}/{}", created.format("%Y-%m-%dT%H:%M:%S%.9fZ"), record.id),
+                record,
+            ));
+        }
+        matched.sort_by(|a, b| b.0.cmp(&a.0));
+        let total = matched.len();
+        let mut page = matched
+            .into_iter()
+            .filter(|(key, _)| query.cursor.as_ref().is_none_or(|cursor| key < cursor))
+            .take(query.limit + 1)
+            .collect::<Vec<_>>();
+        let next_cursor = if page.len() > query.limit {
+            page.truncate(query.limit);
+            page.last().map(|(key, _)| key.clone())
+        } else {
+            None
+        };
+        let mut tasks = Vec::new();
+        for (_, record) in page {
+            if let Some(note) = self.note(&record.id)? {
+                tasks.push(evaluator.view(
+                    note,
+                    scope == Scope::Public || record.visibility == Visibility::Public,
+                )?);
+            }
+        }
+        Ok(TaskPage {
+            tasks,
+            total,
+            next_cursor,
+            diagnostics: self
+                .diagnostics
+                .iter()
+                .filter(|d| scope.includes(d.visibility))
+                .cloned()
+                .collect(),
+            evaluated_at: at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        })
+    }
+
+    pub fn render_task_sheet(
+        &self,
+        id: &str,
+        scope: Scope,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<TaskSheet> {
+        let graph = self.graph()?;
+        if scope != Scope::Public && graph.identities.get(id).is_some_and(|ids| ids.len() > 1) {
+            return Err(
+                Error::new("conflict", "Multiple files have this note ID; run doctor").into(),
+            );
+        }
+        let note = self
+            .note(id)?
+            .filter(|note| scope.includes(note.visibility))
+            .ok_or_else(|| Error::new("not_found", "Sheet not found in the requested scope"))?;
+        let spec = graph
+            .sheets
+            .get(&graph::stored_key(&note.path, id))
+            .map(|record| record.sheet.clone())
+            .ok_or_else(|| Error::new("invalid_input", "The selected note is not a sheet"))?;
+        let public = note.visibility == Visibility::Public;
+        let mut evaluator = Evaluator::new(&graph, at);
+        let mut ancestors = BTreeSet::new();
+        let mut rows = Vec::new();
+        let mut diagnostics = Vec::new();
+        for id in &spec.items {
+            let row = self.sheet_row(id, scope, public, &graph, &mut evaluator)?;
+            if row.task.is_some() {
+                ancestors.extend(evaluator.summary(id, public).ancestors);
+            }
+            rows.push(row);
+        }
+        let mut context = Vec::new();
+        for id in ancestors
+            .iter()
+            .filter(|id| !rows.iter().any(|row| row.id == **id && row.task.is_some()))
+        {
+            // Local prerequisite evidence may be public even in a private-only row view.
+            context.push(self.sheet_row(
+                id,
+                if public { Scope::Public } else { Scope::All },
+                public,
+                &graph,
+                &mut evaluator,
+            )?);
+        }
+        let mut relevant = BTreeSet::from([note.path.clone()]);
+        for row in rows.iter().chain(&context) {
+            if let Some(task) = &row.task {
+                relevant.insert(task.note.path.clone());
+            }
+            if let Some(reason) = &row.unavailable {
+                diagnostics.push(Diagnostic {
+                    path: note.path.clone(),
+                    code: reason.clone(),
+                    message: format!("Sheet item {} is unavailable ({reason})", row.id),
+                    visibility: note.visibility,
+                });
+            }
+        }
+        diagnostics.extend(
+            self.diagnostics
+                .iter()
+                .filter(|d| {
+                    relevant.contains(&d.path)
+                        && (scope != Scope::Public || d.visibility == Visibility::Public)
+                })
+                .cloned(),
+        );
+        let complete =
+            diagnostics.is_empty() && rows.iter().chain(&context).all(|r| r.task.is_some());
+        let next_task = (complete && spec.ordering == SheetOrdering::Preferred)
+            .then(|| {
+                rows.iter()
+                    .find(|r| r.task.as_ref().is_some_and(|t| t.ready))
+                    .map(|r| r.id.clone())
+            })
+            .flatten();
+        let mut result = TaskSheet {
+            note,
+            sheet: spec,
+            scope,
+            evaluated_at: at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            rows,
+            context,
+            diagnostics,
+            complete,
+            next_task,
+            markdown: String::new(),
+        };
+        result.markdown = render_sheet(&result);
+        Ok(result)
+    }
+
+    fn sheet_row(
+        &self,
+        id: &str,
+        scope: Scope,
+        public: bool,
+        graph: &Graph,
+        evaluator: &mut Evaluator<'_>,
+    ) -> anyhow::Result<SheetRow> {
+        let record = graph.lookup(id, public);
+        let reason = match record {
+            None => Some("unresolved_reference"),
+            Some(record) if !scope.includes(record.visibility) => Some("outside_scope"),
+            _ => None,
+        };
+        let task = if reason.is_none() {
+            self.note(id)?
+                .map(|note| {
+                    let public = public || note.visibility == Visibility::Public;
+                    evaluator.view(note, public)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(SheetRow {
+            id: id.into(),
+            task,
+            unavailable: reason.map(str::to_owned),
+        })
+    }
+
     pub fn refresh(root: &Path, force: bool) -> anyhow::Result<Self> {
         match Self::refresh_once(root, force) {
             Err(error)
@@ -94,6 +467,7 @@ impl Index {
             notes,
             tags,
             diagnostics,
+            graph,
         } = read_sources(root, &old, false)?;
         let changed = force
             || outdated
@@ -104,12 +478,77 @@ impl Index {
             });
         // Open empty tables on first use; transactions make a refresh all-or-nothing.
         let missing = tx.open_table(NOTES)?.is_empty()? && !notes.is_empty();
-        if changed || missing {
+        let missing_graph = (tx.open_table(TASKS)?.is_empty()? && !graph.tasks.is_empty())
+            || (tx.open_table(SHEETS)?.is_empty()? && !graph.sheets.is_empty())
+            || !cached_records_match(&tx, TASKS, &graph.tasks)?
+            || !cached_records_match(&tx, SHEETS, &graph.sheets)?
+            || !cached_records_match(&tx, IDENTITIES, &graph.identities)?
+            || !cached_relationships_match(&tx, &graph)?;
+        if changed || missing || missing_graph {
             tx.delete_table(FILES)?;
             tx.delete_table(NOTES)?;
             tx.delete_table(TAGS)?;
             tx.delete_table(DATES)?;
             tx.delete_multimap_table(FILTERS)?;
+            tx.delete_table(TASKS)?;
+            tx.delete_table(SHEETS)?;
+            tx.delete_table(IDENTITIES)?;
+            tx.delete_table(DEFERRALS)?;
+            tx.delete_multimap_table(TASK_FILTERS)?;
+            tx.delete_multimap_table(REQUIRES)?;
+            tx.delete_multimap_table(REQUIRED_BY)?;
+            tx.delete_multimap_table(MEMBER_OF)?;
+            {
+                let mut tasks = tx.open_table(TASKS)?;
+                let mut sheets = tx.open_table(SHEETS)?;
+                let mut identities = tx.open_table(IDENTITIES)?;
+                let mut filters = tx.open_multimap_table(TASK_FILTERS)?;
+                let mut requires = tx.open_multimap_table(REQUIRES)?;
+                let mut required_by = tx.open_multimap_table(REQUIRED_BY)?;
+                let mut member_of = tx.open_multimap_table(MEMBER_OF)?;
+                let mut deferrals = tx.open_table(DEFERRALS)?;
+                for (identity, record) in &graph.tasks {
+                    tasks.insert(identity.as_str(), serde_json::to_vec(record)?.as_slice())?;
+                    for filter in [
+                        format!("state:{}", record.task.state.as_str()),
+                        format!("scope:{}", record.visibility),
+                        format!("status:{}", record.status.as_str()),
+                    ]
+                    .into_iter()
+                    .chain(record.tags.iter().map(|t| format!("tag:{t}")))
+                    {
+                        filters.insert(filter.as_str(), identity.as_str())?;
+                    }
+                    for target in &record.task.requires {
+                        let target = graph.reference_key(target, record.visibility);
+                        requires.insert(identity.as_str(), target.as_str())?;
+                    }
+                    if record.task.deferral == Some(Deferral::Manual) {
+                        filters.insert("deferral:manual", identity.as_str())?;
+                    }
+                    if let Some(Deferral::Until { until }) = &record.task.deferral {
+                        let date = document::timestamp(until)?.format("%Y-%m-%dT%H:%M:%S%.9fZ");
+                        deferrals
+                            .insert(format!("{date}/{identity}").as_str(), identity.as_str())?;
+                    }
+                }
+                for (identity, record) in &graph.sheets {
+                    sheets.insert(identity.as_str(), serde_json::to_vec(record)?.as_slice())?;
+                }
+                for (target, sources) in &graph.incoming_tasks {
+                    for source in sources {
+                        required_by.insert(target.as_str(), source.as_str())?;
+                    }
+                }
+                for (target, sources) in &graph.incoming_sheets {
+                    for source in sources {
+                        member_of.insert(target.as_str(), source.as_str())?;
+                    }
+                }
+                for (id, entries) in &graph.identities {
+                    identities.insert(id.as_str(), serde_json::to_vec(entries)?.as_slice())?;
+                }
+            }
             {
                 let mut table = tx.open_table(FILES)?;
                 for (key, value) in &sources {
@@ -145,6 +584,14 @@ impl Index {
             tx.open_table(TAGS)?;
             tx.open_table(DATES)?;
             tx.open_multimap_table(FILTERS)?;
+            tx.open_table(TASKS)?;
+            tx.open_table(SHEETS)?;
+            tx.open_table(IDENTITIES)?;
+            tx.open_table(DEFERRALS)?;
+            tx.open_multimap_table(TASK_FILTERS)?;
+            tx.open_multimap_table(REQUIRES)?;
+            tx.open_multimap_table(REQUIRED_BY)?;
+            tx.open_multimap_table(MEMBER_OF)?;
         }
         tx.open_table(METADATA)?.insert("generation", GENERATION)?;
         tx.commit()?;
@@ -316,6 +763,243 @@ struct Catalog {
     notes: BTreeMap<String, Note>,
     tags: BTreeMap<String, Tag>,
     diagnostics: Vec<Diagnostic>,
+    graph: Graph,
+}
+
+fn cached_records_match<T: Serialize>(
+    tx: &redb::WriteTransaction,
+    definition: TableDefinition<&str, &[u8]>,
+    expected: &BTreeMap<String, T>,
+) -> anyhow::Result<bool> {
+    let table = tx.open_table(definition)?;
+    if table.len()? != expected.len() as u64 {
+        return Ok(false);
+    }
+    for (key, value) in expected {
+        let encoded = serde_json::to_vec(value)?;
+        if table
+            .get(key.as_str())?
+            .is_none_or(|row| row.value() != encoded)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn cached_relationships_match(tx: &redb::WriteTransaction, graph: &Graph) -> anyhow::Result<bool> {
+    let mut filters: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut requires: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut deferrals = BTreeMap::new();
+    for (identity, record) in &graph.tasks {
+        for filter in [
+            format!("state:{}", record.task.state.as_str()),
+            format!("scope:{}", record.visibility),
+            format!("status:{}", record.status.as_str()),
+        ]
+        .into_iter()
+        .chain(record.tags.iter().map(|tag| format!("tag:{tag}")))
+        {
+            filters.entry(filter).or_default().insert(identity.clone());
+        }
+        for target in &record.task.requires {
+            requires
+                .entry(identity.clone())
+                .or_default()
+                .insert(graph.reference_key(target, record.visibility));
+        }
+        match &record.task.deferral {
+            Some(Deferral::Manual) => {
+                filters
+                    .entry("deferral:manual".into())
+                    .or_default()
+                    .insert(identity.clone());
+            }
+            Some(Deferral::Until { until }) => {
+                let date = document::timestamp(until)?.format("%Y-%m-%dT%H:%M:%S%.9fZ");
+                deferrals.insert(format!("{date}/{identity}"), identity.clone());
+            }
+            None => {}
+        }
+    }
+    for (definition, expected) in [
+        (TASK_FILTERS, &filters),
+        (REQUIRES, &requires),
+        (REQUIRED_BY, &graph.incoming_tasks),
+        (MEMBER_OF, &graph.incoming_sheets),
+    ] {
+        let table = tx.open_multimap_table(definition)?;
+        let mut actual = BTreeMap::new();
+        for row in table.iter()? {
+            let (key, values) = row?;
+            actual.insert(
+                key.value().to_owned(),
+                values
+                    .map(|v| v.map(|v| v.value().to_owned()))
+                    .collect::<std::result::Result<BTreeSet<_>, _>>()?,
+            );
+        }
+        if actual != *expected {
+            return Ok(false);
+        }
+    }
+    let table = tx.open_table(DEFERRALS)?;
+    let actual = table
+        .iter()?
+        .map(|row| row.map(|(k, v)| (k.value().to_owned(), v.value().to_owned())))
+        .collect::<std::result::Result<BTreeMap<_, _>, _>>()?;
+    Ok(actual == deferrals)
+}
+
+fn validate_query(query: &Query) -> crate::Result<()> {
+    if !(1..=1000).contains(&query.limit) {
+        return Err(Error::new(
+            "invalid_input",
+            "limit must be between 1 and 1000",
+        ));
+    }
+    let since = query
+        .since
+        .as_deref()
+        .map(document::date_bound)
+        .transpose()?;
+    let until = query
+        .until
+        .as_deref()
+        .map(document::date_bound)
+        .transpose()?;
+    if since.zip(until).is_some_and(|(a, b)| a >= b) {
+        return Err(Error::new(
+            "invalid_input",
+            "since must be before the exclusive until bound",
+        ));
+    }
+    for tag in query.tags.iter().chain(&query.exclude_tags) {
+        document::tag_name(tag)?;
+    }
+    if let Some(cursor) = &query.cursor {
+        let (date, id) = cursor
+            .split_once('/')
+            .ok_or_else(|| Error::new("invalid_input", "Invalid pagination cursor"))?;
+        document::timestamp(date)?;
+        document::note_id(id)?;
+    }
+    Ok(())
+}
+
+fn render_sheet(sheet: &TaskSheet) -> String {
+    use std::fmt::Write;
+    let ordering = if sheet.sheet.ordering == SheetOrdering::Display {
+        "display"
+    } else {
+        "preferred"
+    };
+    let mut markdown = format!(
+        "# Robostickies task sheet\n\nEvaluated at: {}. Scope: {:?}. Ordering: {ordering}. Complete: {}.\n\nCheckboxes are a read-only view; edit source notes by UUID and revision.\nLinks are relative to the .robostickies directory.\n\n{}\n\nSheet: {}. Revision: {}. [Source]({}).\n",
+        sheet.evaluated_at,
+        sheet.scope,
+        if sheet.complete { "yes" } else { "no" },
+        sheet.note.body,
+        sheet.note.id,
+        sheet.note.revision,
+        sheet.note.path,
+    );
+    if let Some(id) = &sheet.next_task {
+        let _ = writeln!(markdown, "\nNext suggested task: {id}.");
+    }
+    for (title, rows) in [
+        ("Tasks", &sheet.rows),
+        ("Prerequisite context", &sheet.context),
+    ] {
+        if rows.is_empty() {
+            continue;
+        }
+        let _ = writeln!(markdown, "\n## {title}\n");
+        for (index, row) in rows.iter().enumerate() {
+            let indent = " ".repeat((index + 1).to_string().len() + 2);
+            if let Some(view) = &row.task {
+                let state = match view.task.state {
+                    TaskState::Done => "Done",
+                    TaskState::Cancelled => "Cancelled",
+                    _ if view.ready => "Ready",
+                    _ if view.note.status == NoteStatus::Archived => "Archived",
+                    _ if view.active_deferral.is_some() => "Deferred",
+                    _ => "Blocked",
+                };
+                let _ = writeln!(
+                    markdown,
+                    "{}. [{}] **{state} · {}** ({}) — {}",
+                    index + 1,
+                    if view.task.state == TaskState::Done {
+                        "x"
+                    } else {
+                        " "
+                    },
+                    view.task.state.as_str(),
+                    view.note.status.as_str(),
+                    view.note.id
+                );
+                let _ = writeln!(
+                    markdown,
+                    "\n{indent}Revision: {}. [Source]({}).\n",
+                    view.note.revision, view.note.path
+                );
+                for line in view.note.body.lines() {
+                    let _ = writeln!(markdown, "{indent}{line}");
+                }
+                if let Some(deferral) = &view.active_deferral {
+                    let reason = match deferral {
+                        Deferral::Manual => "Deferred manually; resume explicitly.".into(),
+                        Deferral::Until { until } => format!("Deferred until {until}."),
+                    };
+                    let _ = writeln!(markdown, "\n{indent}{reason}");
+                }
+                for blocker in &view.blockers {
+                    let _ = writeln!(
+                        markdown,
+                        "\n{indent}Prerequisite {}: {} ({}).",
+                        blocker.id,
+                        blocker.path.join(" → "),
+                        blocker.reason
+                    );
+                }
+            } else {
+                let _ = writeln!(
+                    markdown,
+                    "{}. [ ] **Unavailable** — {} ({}).",
+                    index + 1,
+                    row.id,
+                    row.unavailable.as_deref().unwrap_or("unresolved_reference")
+                );
+            }
+        }
+    }
+    if !sheet.diagnostics.is_empty() {
+        markdown.push_str("\n## Diagnostics\n\n");
+        for diagnostic in &sheet.diagnostics {
+            // Diagnostics are generated prose, rather than authored Markdown.
+            let escaped: String = diagnostic
+                .message
+                .chars()
+                .flat_map(|c| {
+                    if matches!(c, '\\' | '[' | ']' | '*' | '_' | '`' | '<' | '>') {
+                        vec!['\\', c]
+                    } else {
+                        vec![c]
+                    }
+                })
+                .collect();
+            let _ = writeln!(markdown, "- {escaped}");
+        }
+    }
+    markdown
+}
+
+/// Source-only fallback for graph validation while the disposable cache is unavailable.
+pub(crate) fn source_graph(root: &Path) -> crate::Result<Graph> {
+    read_sources(root, &BTreeMap::new(), false)
+        .map(|catalog| catalog.graph)
+        .map_err(|error| Error::new("io", error.to_string()))
 }
 
 /// Validate authoritative sources without opening or repairing the disposable cache.
@@ -392,6 +1076,8 @@ fn read_sources(
             None => {}
         }
     }
+    let graph = Graph::from_notes(groups.values().flatten(), version)?;
+    diagnostics.extend(graph.diagnostics(Scope::All));
     let mut notes = BTreeMap::new();
     for (id, copies) in groups {
         if copies.len() == 1 {
@@ -438,6 +1124,7 @@ fn read_sources(
         notes,
         tags,
         diagnostics,
+        graph,
     })
 }
 
@@ -586,6 +1273,444 @@ fn scan(
 }
 
 #[cfg(test)]
+mod task_index_tests {
+    use super::*;
+    use crate::Store;
+
+    fn setup() -> (tempfile::TempDir, Store) {
+        let root = tempfile::tempdir().unwrap();
+        let store = Store::with_user_config(root.path(), None).unwrap();
+        store.init(InitOptions::default()).unwrap();
+        (root, store)
+    }
+
+    fn create(store: &Store, body: &str, spec: TaskSpec, private: bool) -> Note {
+        store
+            .create_note(CreateNote {
+                body: body.into(),
+                task: Some(spec),
+                private: Some(private),
+                ..CreateNote::default()
+            })
+            .unwrap()
+            .note
+    }
+
+    #[test]
+    fn dated_deferral_expires_exactly_at_the_captured_instant_without_writes() {
+        let (_root, store) = setup();
+        let until = "2030-01-02T03:04:05.123456789Z";
+        let task = create(
+            &store,
+            "Timed",
+            TaskSpec {
+                deferral: Some(Deferral::Until {
+                    until: until.into(),
+                }),
+                ..TaskSpec::default()
+            },
+            false,
+        );
+        let manual = create(
+            &store,
+            "Manual",
+            TaskSpec {
+                deferral: Some(Deferral::Manual),
+                ..TaskSpec::default()
+            },
+            false,
+        );
+        let sheet = store
+            .create_note(CreateNote {
+                body: "Timed work".into(),
+                sheet: Some(SheetSpec {
+                    items: vec![task.id.clone(), manual.id.clone()],
+                    ordering: SheetOrdering::Preferred,
+                }),
+                ..CreateNote::default()
+            })
+            .unwrap()
+            .note;
+        let bytes = fs::read(store.directory().join(&task.path)).unwrap();
+        let index = Index::refresh(&store.directory(), false).unwrap();
+        let at = document::timestamp(until).unwrap();
+        for (instant, expected) in [
+            (at - chrono::Duration::nanoseconds(1), false),
+            (at, true),
+            (at + chrono::Duration::nanoseconds(1), true),
+        ] {
+            let page = index
+                .list_tasks(
+                    &TaskQuery {
+                        ready: Some(true),
+                        ..TaskQuery::default()
+                    },
+                    instant,
+                )
+                .unwrap();
+            assert_eq!(page.total, usize::from(expected));
+            let waiting = index
+                .list_tasks(
+                    &TaskQuery {
+                        deferred: Some(true),
+                        ..TaskQuery::default()
+                    },
+                    instant,
+                )
+                .unwrap();
+            assert_eq!(waiting.total, if expected { 1 } else { 2 });
+            let eligible = index
+                .list_tasks(
+                    &TaskQuery {
+                        deferred: Some(false),
+                        ..TaskQuery::default()
+                    },
+                    instant,
+                )
+                .unwrap();
+            assert_eq!(eligible.total, usize::from(expected));
+            let report = index
+                .render_task_sheet(&sheet.id, Scope::Public, instant)
+                .unwrap();
+            assert_eq!(report.next_task, expected.then(|| task.id.clone()));
+            assert_eq!(report.evaluated_at, page.evaluated_at);
+            assert_eq!(report.rows[0].task.as_ref().unwrap().ready, expected);
+        }
+        assert_eq!(fs::read(store.directory().join(&task.path)).unwrap(), bytes);
+        assert_eq!(store.get_note(&task.id).unwrap().revision, task.revision);
+        let tx = index.db.begin_read().unwrap();
+        let bytes = tx
+            .open_table(TASKS)
+            .unwrap()
+            .get(graph::key(Visibility::Public, &task.id).as_str())
+            .unwrap()
+            .unwrap()
+            .value()
+            .to_vec();
+        let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(record.get("ready").is_none() && record.get("body").is_none());
+        assert_eq!(record["task"]["deferral"]["until"], until);
+    }
+
+    #[test]
+    fn task_indexes_refresh_reverse_edges_membership_and_recover_damaged_derived_data() {
+        let (_root, store) = setup();
+        let a = create(&store, "A", TaskSpec::default(), false);
+        let b = create(
+            &store,
+            "B",
+            TaskSpec {
+                requires: vec![a.id.clone()],
+                deferral: Some(Deferral::Manual),
+                ..TaskSpec::default()
+            },
+            true,
+        );
+        let sheet = store
+            .create_note(CreateNote {
+                body: "Order".into(),
+                private: Some(true),
+                sheet: Some(SheetSpec {
+                    items: vec![b.id.clone(), a.id.clone()],
+                    ordering: SheetOrdering::Preferred,
+                }),
+                ..CreateNote::default()
+            })
+            .unwrap()
+            .note;
+        let inspect = || {
+            let index = Index::refresh(&store.directory(), false).unwrap();
+            let graph = index.graph().unwrap();
+            assert_eq!(
+                graph.incoming_tasks[&graph::key(Visibility::Public, &a.id)],
+                BTreeSet::from([graph::key(Visibility::Private, &b.id)])
+            );
+            assert_eq!(
+                graph.incoming_sheets[&graph::key(Visibility::Private, &b.id)],
+                BTreeSet::from([graph::key(Visibility::Private, &sheet.id)])
+            );
+            assert_eq!(
+                graph.sheets[&graph::key(Visibility::Private, &sheet.id)]
+                    .sheet
+                    .items,
+                vec![b.id.clone(), a.id.clone()]
+            );
+            assert_eq!(
+                index
+                    .list_tasks(
+                        &TaskQuery {
+                            deferred: Some(true),
+                            ..TaskQuery::default()
+                        },
+                        chrono::Utc::now()
+                    )
+                    .unwrap()
+                    .total,
+                1
+            );
+        };
+        inspect();
+        for damage in [
+            "reverse",
+            "membership",
+            "filters",
+            "requires",
+            "deferrals",
+            "record",
+            "identity",
+            "generation",
+        ] {
+            let db = Database::open(store.directory().join("cache/index.redb")).unwrap();
+            let tx = db.begin_write().unwrap();
+            match damage {
+                "reverse" => {
+                    tx.delete_multimap_table(REQUIRED_BY).unwrap();
+                }
+                "membership" => {
+                    tx.delete_multimap_table(MEMBER_OF).unwrap();
+                }
+                "filters" => {
+                    tx.delete_multimap_table(TASK_FILTERS).unwrap();
+                }
+                "requires" => {
+                    tx.delete_multimap_table(REQUIRES).unwrap();
+                }
+                "deferrals" => {
+                    tx.open_table(DEFERRALS)
+                        .unwrap()
+                        .insert("bad", "bad")
+                        .unwrap();
+                }
+                "record" => {
+                    tx.open_table(TASKS)
+                        .unwrap()
+                        .insert(
+                            graph::key(Visibility::Public, &a.id).as_str(),
+                            b"invalid".as_slice(),
+                        )
+                        .unwrap();
+                }
+                "identity" => {
+                    tx.open_table(IDENTITIES)
+                        .unwrap()
+                        .insert(a.id.as_str(), b"invalid".as_slice())
+                        .unwrap();
+                }
+                "generation" => {
+                    tx.open_table(METADATA)
+                        .unwrap()
+                        .insert("generation", 3)
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            tx.commit().unwrap();
+            drop(db);
+            inspect();
+            assert_eq!(
+                store
+                    .update_note(UpdateNote {
+                        id: a.id.clone(),
+                        expected_revision: a.revision.clone(),
+                        clear_task: true,
+                        ..UpdateNote::default()
+                    })
+                    .unwrap_err()
+                    .code,
+                "invalid_input"
+            );
+        }
+        let b = store
+            .update_note(UpdateNote {
+                id: b.id.clone(),
+                expected_revision: b.revision.clone(),
+                task: Some(TaskPatch {
+                    requires: Some(vec![]),
+                    clear_deferral: true,
+                    ..TaskPatch::default()
+                }),
+                ..UpdateNote::default()
+            })
+            .unwrap()
+            .note;
+        let index = Index::refresh(&store.directory(), false).unwrap();
+        assert!(index.graph().unwrap().incoming_tasks.is_empty());
+        assert_eq!(
+            index
+                .list_tasks(
+                    &TaskQuery {
+                        deferred: Some(true),
+                        ..TaskQuery::default()
+                    },
+                    chrono::Utc::now()
+                )
+                .unwrap()
+                .total,
+            0
+        );
+        drop(index);
+        fs::remove_file(store.directory().join(&b.path)).unwrap();
+        let index = Index::refresh(&store.directory(), false).unwrap();
+        assert_eq!(index.graph().unwrap().tasks.len(), 1);
+        assert!(
+            !index
+                .render_task_sheet(&sheet.id, Scope::All, chrono::Utc::now())
+                .unwrap()
+                .complete
+        );
+    }
+
+    #[test]
+    fn task_candidate_filters_paginate_without_filtering_prerequisite_evidence() {
+        let (_root, store) = setup();
+        let done = create(
+            &store,
+            "Prerequisite evidence",
+            TaskSpec {
+                state: TaskState::Done,
+                ..TaskSpec::default()
+            },
+            false,
+        );
+        let done = store
+            .update_note(UpdateNote {
+                id: done.id,
+                expected_revision: done.revision,
+                status: Some(NoteStatus::Archived),
+                ..UpdateNote::default()
+            })
+            .unwrap()
+            .note;
+        let mut selected = Vec::new();
+        for index in 0..4 {
+            let note = create(
+                &store,
+                &format!("Selected {index}"),
+                TaskSpec {
+                    requires: vec![done.id.clone()],
+                    ..TaskSpec::default()
+                },
+                index % 2 == 0,
+            );
+            selected.push(
+                store
+                    .update_note(UpdateNote {
+                        id: note.id,
+                        expected_revision: note.revision,
+                        tags: Some(vec!["paperclip".into()]),
+                        ..UpdateNote::default()
+                    })
+                    .unwrap()
+                    .note,
+            );
+        }
+        let index = Index::refresh(&store.directory(), false).unwrap();
+        let at = chrono::Utc::now();
+        let mut query = TaskQuery {
+            ready: Some(true),
+            notes: Query {
+                tags: vec!["paperclip".into()],
+                since: Some("2000-01-01".into()),
+                until: Some("2100-01-01".into()),
+                text: Some("SELECTED".into()),
+                limit: 2,
+                ..Query::default()
+            },
+            ..TaskQuery::default()
+        };
+        let page = index.list_tasks(&query, at).unwrap();
+        assert_eq!(page.total, 4);
+        assert_eq!(page.tasks.len(), 2);
+        query.notes.cursor = page.next_cursor;
+        let next = index.list_tasks(&query, at).unwrap();
+        assert_eq!(next.tasks.len(), 2);
+        assert!(next.next_cursor.is_none());
+        assert!(
+            next.tasks
+                .iter()
+                .all(|t| !page.tasks.iter().any(|old| old.note.id == t.note.id))
+        );
+        for (scope, total) in [(Scope::Private, 2), (Scope::Public, 2), (Scope::All, 4)] {
+            assert_eq!(
+                index
+                    .list_tasks(
+                        &TaskQuery {
+                            notes: Query {
+                                scope: Some(scope),
+                                ..Query::default()
+                            },
+                            ..TaskQuery::default()
+                        },
+                        at
+                    )
+                    .unwrap()
+                    .total,
+                total
+            );
+        }
+        assert_eq!(
+            index
+                .list_tasks(
+                    &TaskQuery {
+                        notes: Query {
+                            exclude_tags: vec!["paperclip".into()],
+                            ..Query::default()
+                        },
+                        ..TaskQuery::default()
+                    },
+                    at
+                )
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(
+            index
+                .list_tasks(
+                    &TaskQuery {
+                        states: vec![TaskState::Done],
+                        notes: Query {
+                            status: StatusFilter::Archived,
+                            ..Query::default()
+                        },
+                        ..TaskQuery::default()
+                    },
+                    at
+                )
+                .unwrap()
+                .total,
+            1
+        );
+        for input in [
+            TaskQuery {
+                notes: Query {
+                    limit: 1001,
+                    ..Query::default()
+                },
+                ..TaskQuery::default()
+            },
+            TaskQuery {
+                notes: Query {
+                    cursor: Some("bad/id".into()),
+                    ..Query::default()
+                },
+                ..TaskQuery::default()
+            },
+            TaskQuery {
+                notes: Query {
+                    tags: vec!["bad tag".into()],
+                    ..Query::default()
+                },
+                ..TaskQuery::default()
+            },
+        ] {
+            assert!(index.list_tasks(&input, at).is_err());
+        }
+        drop(selected);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::Store;
@@ -597,6 +1722,8 @@ mod tests {
         store.init(InitOptions::default()).unwrap();
         let note = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Cache recovery fixture".into(),
                 tags: vec![],
@@ -715,6 +1842,8 @@ mod recovery_tests {
         store.init(InitOptions::default()).unwrap();
         let note = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Table recovery fixture".into(),
                 tags: vec!["papercut".into()],
@@ -825,6 +1954,8 @@ mod recovery_tests {
         store.init(InitOptions::default()).unwrap();
         let note = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Derived rows fixture".into(),
                 tags: vec![],

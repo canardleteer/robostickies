@@ -3,7 +3,7 @@ source: tests/contract_snapshots.rs
 expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resources\": resources})"
 ---
 {
-  "instructions": "Call get_context at the start of work. Inspect upgrade.requirement and upgrade.message independently of healthy and diagnostics. Surface should recommendations unless upgrade.deferred is true; explain must requirements before ordinary work. Offer an explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. Use version to identify this running MCP build. A newer CLI on disk does not refresh an existing server; use a fresh server before verifying changed behavior. Read tag names, optional descriptions, and full startup guidance. Record friction with papercut and useful successes with paperclip; other tags and general notes are welcome. Private tags use private:<name> and force ignored local storage. Public review includes only public notes; publish_note makes an explicit public copy. Read get_context for details and a portable AGENTS.md snippet. Use init_store if the repository is not initialized.",
+  "instructions": "Call get_context at the start of work. Inspect upgrade.requirement and upgrade.message independently of healthy and diagnostics. Surface should recommendations unless upgrade.deferred is true; explain must requirements before ordinary work. Offer an explicit upgrade_store preview, upgrade, or deferral; never migrate automatically. Use version to identify this running MCP build. A newer CLI on disk does not refresh an existing server; use a fresh server before verifying changed behavior. Read tag names, optional descriptions, and full startup guidance. Record friction with papercut and useful successes with paperclip; other tags and general notes are welcome. Private tags use private:<name> and force ignored local storage. Public review includes only public notes; publish_note makes an explicit public copy. Discover ready work with list_tasks and read saved instructions with render_task_sheet. Task/sheet writes require v1alpha5. Read get_context for details and a portable AGENTS.md snippet. Use init_store if the repository is not initialized.",
   "resources": [
     {
       "description": "Local configuration defaults and their sources",
@@ -38,6 +38,102 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
       },
       "description": "Record a brief observation. Prefer papercut for friction and paperclip for\nconcrete wins; general notes are welcome. Any private:<tag> forces private\nstorage. Set private=true to keep any note local; omit to derive from tags.\nBodies are nonempty UTF-8 text; optional body_format is an advisory hint.",
       "inputSchema": {
+        "$defs": {
+          "Deferral": {
+            "description": "Waiting is separate from prerequisites. Date inputs accept UTC dates or RFC3339.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "until",
+                    "type": "string"
+                  },
+                  "until": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "until"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "SheetOrdering": {
+            "description": "Presentation order never creates prerequisites. Preferred order suggests ready work.",
+            "enum": [
+              "display",
+              "preferred"
+            ],
+            "type": "string"
+          },
+          "SheetSpec": {
+            "additionalProperties": false,
+            "description": "A saved, ordered list of task UUIDs. Membership may be empty.",
+            "properties": {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ordering": {
+                "$ref": "#/$defs/SheetOrdering",
+                "default": "display"
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "type": "object"
+          },
+          "TaskSpec": {
+            "additionalProperties": false,
+            "description": "Complete task metadata. New callers may use `Default` to create a todo task.\nStored mappings must explicitly contain state; references retain authored order.",
+            "properties": {
+              "deferral": {
+                "$ref": "#/$defs/Deferral"
+              },
+              "requires": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/$defs/TaskState",
+                "default": "todo"
+              }
+            },
+            "type": "object"
+          },
+          "TaskState": {
+            "description": "Work state, independent of the containing note's active/archived status.",
+            "enum": [
+              "todo",
+              "in_progress",
+              "done",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -59,12 +155,20 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               "null"
             ]
           },
+          "sheet": {
+            "$ref": "#/$defs/SheetSpec",
+            "description": "Saved ordered task membership; requires v1alpha5."
+          },
           "tags": {
             "default": [],
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "task": {
+            "$ref": "#/$defs/TaskSpec",
+            "description": "Explicit task classification; requires v1alpha5. Mutually exclusive with sheet."
           }
         },
         "required": [
@@ -303,6 +407,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha4",
                 "description": "Tags use optional descriptions instead of required topics.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha5",
+                "description": "Task/sheet metadata and namespace-safe graph integrity rules.",
+                "type": "string"
               }
             ]
           },
@@ -529,6 +638,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha4",
                 "description": "Tags use optional descriptions instead of required topics.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha5",
+                "description": "Task/sheet metadata and namespace-safe graph integrity rules.",
                 "type": "string"
               }
             ]
@@ -1390,11 +1504,535 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
     },
     {
       "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Discover tasks with readiness, complete prerequisite paths, and active deferrals.\nDefaults to active todo/in_progress tasks across all visibility. Note filters,\nstates, ready, blocked, and deferred combine with AND; blockers outside the page\nstill count. Readiness is evaluated at one returned UTC instant; re-evaluate before acting.",
+      "inputSchema": {
+        "$defs": {
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          },
+          "StatusFilter": {
+            "description": "Status selection for browsing and review.",
+            "enum": [
+              "active",
+              "archived",
+              "all"
+            ],
+            "type": "string"
+          },
+          "TaskState": {
+            "description": "Work state, independent of the containing note's active/archived status.",
+            "enum": [
+              "todo",
+              "in_progress",
+              "done",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "all_task_states": {
+            "default": false,
+            "type": "boolean"
+          },
+          "blocked": {
+            "default": null,
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "cursor": {
+            "default": null,
+            "description": "Cursor returned by a previous response with the same filters.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deferred": {
+            "default": null,
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "exclude_tags": {
+            "default": [],
+            "description": "Exclude notes with any of these tags.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Page size, between 1 and 1000.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ready": {
+            "default": null,
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Scope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Defaults to all for browsing, and public for review."
+          },
+          "since": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "states": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/TaskState"
+            },
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/$defs/StatusFilter",
+            "default": "active"
+          },
+          "tags": {
+            "default": [],
+            "description": "Every listed tag must be attached to the note.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "text": {
+            "default": null,
+            "description": "Case-insensitive literal substring of the note body.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_tasks",
+      "outputSchema": {
+        "$defs": {
+          "Blocker": {
+            "description": "One deterministic relationship path from the selected task to an unsatisfied task.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "description": "Includes the selected task and the blocker UUID.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "reason": {
+                "description": "unfinished, unresolved_reference, or cycle; no private lookup details in public views.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "Deferral": {
+            "description": "Waiting is separate from prerequisites. Date inputs accept UTC dates or RFC3339.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "until",
+                    "type": "string"
+                  },
+                  "until": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "until"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "TaskSpec": {
+            "additionalProperties": false,
+            "description": "Complete task metadata. New callers may use `Default` to create a todo task.\nStored mappings must explicitly contain state; references retain authored order.",
+            "properties": {
+              "deferral": {
+                "$ref": "#/$defs/Deferral"
+              },
+              "requires": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/$defs/TaskState",
+                "default": "todo"
+              }
+            },
+            "required": [
+              "state",
+              "requires"
+            ],
+            "type": "object"
+          },
+          "TaskState": {
+            "description": "Work state, independent of the containing note's active/archived status.",
+            "enum": [
+              "todo",
+              "in_progress",
+              "done",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "TaskView": {
+            "description": "A decoded task and the evaluation of its complete prerequisite closure.",
+            "properties": {
+              "active_deferral": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Deferral"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present only while a manual or dated deferral is active."
+              },
+              "blocked": {
+                "type": "boolean"
+              },
+              "blockers": {
+                "items": {
+                  "$ref": "#/$defs/Blocker"
+                },
+                "type": "array"
+              },
+              "note": {
+                "$ref": "#/$defs/Note"
+              },
+              "ready": {
+                "type": "boolean"
+              },
+              "task": {
+                "$ref": "#/$defs/TaskSpec"
+              },
+              "unsatisfied_prerequisites": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "task",
+              "ready",
+              "blocked",
+              "active_deferral",
+              "unsatisfied_prerequisites",
+              "blockers",
+              "note"
+            ],
+            "type": "object"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "evaluated_at": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/$defs/TaskView"
+            },
+            "type": "array"
+          },
+          "total": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tasks",
+          "total",
+          "next_cursor",
+          "diagnostics",
+          "evaluated_at"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "openWorldHint": false
       },
       "description": "Copy a private note into public storage immediately, retaining the original.\nPrivate tags and additional metadata are omitted. Set dry_run=true for a\npreview, or provide replacement body/public tags. Review prose before sharing.\nexpected_revision is required for both previews and copies; a changed source\nreturns conflict without creating a copy.\nA body_format hint is public only when supplied explicitly for this copy.",
       "inputSchema": {
+        "$defs": {
+          "Deferral": {
+            "description": "Waiting is separate from prerequisites. Date inputs accept UTC dates or RFC3339.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "until",
+                    "type": "string"
+                  },
+                  "until": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "until"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "SheetOrdering": {
+            "description": "Presentation order never creates prerequisites. Preferred order suggests ready work.",
+            "enum": [
+              "display",
+              "preferred"
+            ],
+            "type": "string"
+          },
+          "SheetSpec": {
+            "additionalProperties": false,
+            "description": "A saved, ordered list of task UUIDs. Membership may be empty.",
+            "properties": {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ordering": {
+                "$ref": "#/$defs/SheetOrdering",
+                "default": "display"
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "type": "object"
+          },
+          "TaskSpec": {
+            "additionalProperties": false,
+            "description": "Complete task metadata. New callers may use `Default` to create a todo task.\nStored mappings must explicitly contain state; references retain authored order.",
+            "properties": {
+              "deferral": {
+                "$ref": "#/$defs/Deferral"
+              },
+              "requires": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/$defs/TaskState",
+                "default": "todo"
+              }
+            },
+            "type": "object"
+          },
+          "TaskState": {
+            "description": "Work state, independent of the containing note's active/archived status.",
+            "enum": [
+              "todo",
+              "in_progress",
+              "done",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -1423,6 +2061,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           "id": {
             "type": "string"
           },
+          "sheet": {
+            "$ref": "#/$defs/SheetSpec",
+            "description": "Complete reviewed public membership; source sheet data is otherwise stripped."
+          },
           "tags": {
             "description": "Replace the public tag set. Private tags are always removed or rejected.",
             "items": {
@@ -1432,6 +2074,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               "array",
               "null"
             ]
+          },
+          "task": {
+            "$ref": "#/$defs/TaskSpec",
+            "description": "Complete reviewed public task specification. Source task data is otherwise stripped."
           }
         },
         "required": [
@@ -1580,6 +2226,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha4",
                 "description": "Tags use optional descriptions instead of required topics.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha5",
+                "description": "Task/sheet metadata and namespace-safe graph integrity rules.",
+                "type": "string"
               }
             ]
           },
@@ -1704,6 +2355,421 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
           "notes",
           "tags",
           "diagnostics"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "annotations": {
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Render a saved task sheet in authored order, including full bodies and revisions.\nDefaults to public scope; use all for a complete mixed local sheet. Unavailable\nmembers retain placeholders. Only complete preferred sheets suggest a ready task.\nCheckboxes are a read-only view; edit source tasks through update_note.",
+      "inputSchema": {
+        "$defs": {
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Scope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "render_task_sheet",
+      "outputSchema": {
+        "$defs": {
+          "Blocker": {
+            "description": "One deterministic relationship path from the selected task to an unsatisfied task.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "description": "Includes the selected task and the blocker UUID.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "reason": {
+                "description": "unfinished, unresolved_reference, or cycle; no private lookup details in public views.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "Deferral": {
+            "description": "Waiting is separate from prerequisites. Date inputs accept UTC dates or RFC3339.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "until",
+                    "type": "string"
+                  },
+                  "until": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "until"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "Diagnostic": {
+            "description": "A source problem surfaced without silently serving stale cached content.",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility"
+              }
+            },
+            "required": [
+              "path",
+              "code",
+              "message",
+              "visibility"
+            ],
+            "type": "object"
+          },
+          "Note": {
+            "description": "A note read from its authoritative Markdown file.",
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "metadata": {
+                "additionalProperties": true,
+                "description": "Additional YAML fields retained during edits.",
+                "type": "object"
+              },
+              "path": {
+                "description": "Path relative to `.robostickies`.",
+                "type": "string"
+              },
+              "revision": {
+                "description": "Content hash for optimistic concurrency checks.",
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/$defs/NoteStatus"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "visibility": {
+                "$ref": "#/$defs/Visibility",
+                "description": "Computed from storage location and private tag references."
+              }
+            },
+            "required": [
+              "id",
+              "created_at",
+              "updated_at",
+              "tags",
+              "status",
+              "body",
+              "visibility",
+              "revision",
+              "path",
+              "metadata"
+            ],
+            "type": "object"
+          },
+          "NoteStatus": {
+            "description": "Notes can be archived without deleting their history.",
+            "enum": [
+              "active",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "Scope": {
+            "description": "Which namespaces a read operation may include.",
+            "enum": [
+              "public",
+              "private",
+              "all"
+            ],
+            "type": "string"
+          },
+          "SheetOrdering": {
+            "description": "Presentation order never creates prerequisites. Preferred order suggests ready work.",
+            "enum": [
+              "display",
+              "preferred"
+            ],
+            "type": "string"
+          },
+          "SheetRow": {
+            "description": "An authored sheet position; unavailable members retain their position and UUID.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "task": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TaskView"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "unavailable": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "task",
+              "unavailable"
+            ],
+            "type": "object"
+          },
+          "SheetSpec": {
+            "additionalProperties": false,
+            "description": "A saved, ordered list of task UUIDs. Membership may be empty.",
+            "properties": {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ordering": {
+                "$ref": "#/$defs/SheetOrdering",
+                "default": "display"
+              }
+            },
+            "required": [
+              "items",
+              "ordering"
+            ],
+            "type": "object"
+          },
+          "TaskSpec": {
+            "additionalProperties": false,
+            "description": "Complete task metadata. New callers may use `Default` to create a todo task.\nStored mappings must explicitly contain state; references retain authored order.",
+            "properties": {
+              "deferral": {
+                "$ref": "#/$defs/Deferral"
+              },
+              "requires": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/$defs/TaskState",
+                "default": "todo"
+              }
+            },
+            "required": [
+              "state",
+              "requires"
+            ],
+            "type": "object"
+          },
+          "TaskState": {
+            "description": "Work state, independent of the containing note's active/archived status.",
+            "enum": [
+              "todo",
+              "in_progress",
+              "done",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "TaskView": {
+            "description": "A decoded task and the evaluation of its complete prerequisite closure.",
+            "properties": {
+              "active_deferral": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Deferral"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present only while a manual or dated deferral is active."
+              },
+              "blocked": {
+                "type": "boolean"
+              },
+              "blockers": {
+                "items": {
+                  "$ref": "#/$defs/Blocker"
+                },
+                "type": "array"
+              },
+              "note": {
+                "$ref": "#/$defs/Note"
+              },
+              "ready": {
+                "type": "boolean"
+              },
+              "task": {
+                "$ref": "#/$defs/TaskSpec"
+              },
+              "unsatisfied_prerequisites": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "task",
+              "ready",
+              "blocked",
+              "active_deferral",
+              "unsatisfied_prerequisites",
+              "blockers",
+              "note"
+            ],
+            "type": "object"
+          },
+          "Visibility": {
+            "description": "Storage namespace. Public means eligible for sharing through Git.",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "context": {
+            "description": "Transitive prerequisites outside membership, including completed evidence.",
+            "items": {
+              "$ref": "#/$defs/SheetRow"
+            },
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/$defs/Diagnostic"
+            },
+            "type": "array"
+          },
+          "evaluated_at": {
+            "type": "string"
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "next_task": {
+            "description": "Only a complete preferred sheet suggests its first ready member.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "$ref": "#/$defs/Note"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/SheetRow"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/$defs/Scope"
+          },
+          "sheet": {
+            "$ref": "#/$defs/SheetSpec"
+          }
+        },
+        "required": [
+          "note",
+          "sheet",
+          "scope",
+          "evaluated_at",
+          "rows",
+          "context",
+          "diagnostics",
+          "complete",
+          "next_task",
+          "markdown"
         ],
         "type": "object"
       }
@@ -1950,11 +3016,103 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
       "description": "Edit only specified fields. Use status=archived for resolved/obsolete notes\nand status=active to restore them. Private notes remain private; publishing\nis separate. expected_revision is required. On conflict, re-read and reconcile\nthe changes before retrying; there is no overwrite bypass.",
       "inputSchema": {
         "$defs": {
+          "Deferral": {
+            "description": "Waiting is separate from prerequisites. Date inputs accept UTC dates or RFC3339.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "until",
+                    "type": "string"
+                  },
+                  "until": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "until"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "NoteStatus": {
             "description": "Notes can be archived without deleting their history.",
             "enum": [
               "active",
               "archived"
+            ],
+            "type": "string"
+          },
+          "SheetOrdering": {
+            "description": "Presentation order never creates prerequisites. Preferred order suggests ready work.",
+            "enum": [
+              "display",
+              "preferred"
+            ],
+            "type": "string"
+          },
+          "SheetPatch": {
+            "additionalProperties": false,
+            "description": "Selected sheet changes. Supplying items replaces the entire authored list.",
+            "properties": {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "ordering": {
+                "$ref": "#/$defs/SheetOrdering"
+              }
+            },
+            "type": "object"
+          },
+          "TaskPatch": {
+            "additionalProperties": false,
+            "description": "Selected task changes. Omission preserves a field; an empty requires list clears it.\nTerminal transitions clear deferral, and clear_deferral conflicts with deferral.",
+            "properties": {
+              "clear_deferral": {
+                "default": false,
+                "type": "boolean"
+              },
+              "deferral": {
+                "$ref": "#/$defs/Deferral"
+              },
+              "requires": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/$defs/TaskState"
+              }
+            },
+            "type": "object"
+          },
+          "TaskState": {
+            "description": "Work state, independent of the containing note's active/archived status.",
+            "enum": [
+              "todo",
+              "in_progress",
+              "done",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -1980,6 +3138,14 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
             "description": "Remove a string hint; conflicts with body_format. Non-string legacy values\nmust be reconciled in the source rather than overwritten by this interface.",
             "type": "boolean"
           },
+          "clear_sheet": {
+            "default": false,
+            "type": "boolean"
+          },
+          "clear_task": {
+            "default": false,
+            "type": "boolean"
+          },
           "expected_revision": {
             "description": "Required last-read revision. A stale value rejects the edit without changing sources.",
             "type": "string"
@@ -1993,6 +3159,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               "boolean",
               "null"
             ]
+          },
+          "sheet": {
+            "$ref": "#/$defs/SheetPatch",
+            "description": "Patch or convert an ordinary note into a saved sheet. Null is invalid."
           },
           "status": {
             "anyOf": [
@@ -2012,6 +3182,10 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               "array",
               "null"
             ]
+          },
+          "task": {
+            "$ref": "#/$defs/TaskPatch",
+            "description": "Patch or convert an ordinary note into a task. Null is invalid."
           }
         },
         "required": [
@@ -2168,6 +3342,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
                 "const": "v1alpha4",
                 "description": "Tags use optional descriptions instead of required topics.",
                 "type": "string"
+              },
+              {
+                "const": "v1alpha5",
+                "description": "Task/sheet metadata and namespace-safe graph integrity rules.",
+                "type": "string"
               }
             ]
           },
@@ -2321,6 +3500,11 @@ expression: "json!({\"instructions\": instructions, \"tools\": tools, \"resource
               {
                 "const": "v1alpha4",
                 "description": "Tags use optional descriptions instead of required topics.",
+                "type": "string"
+              },
+              {
+                "const": "v1alpha5",
+                "description": "Task/sheet metadata and namespace-safe graph integrity rules.",
                 "type": "string"
               }
             ]

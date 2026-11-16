@@ -30,6 +30,8 @@ async fn cli_help_contract() {
             vec!["tags"],
             vec!["tags", "create"],
             vec!["publish"],
+            vec!["tasks", "list"],
+            vec!["sheets", "render"],
             vec!["upgrade"],
             vec!["mcp"],
         ] {

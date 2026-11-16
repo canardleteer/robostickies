@@ -10,7 +10,7 @@
 Enables taking brief repository notes for humans and agents, during development
 and available through a CLI interface and an MCP `stdio` server. Capture what
 gets in the way (`papercut`), what helps (`paperclip`), and general
-observations or todo tasks with your own tags.
+observations with your own tags, or track structured tasks and saved work sheets.
 
 Markdown with YAML frontmatter is the source of truth. Shared files can travel
 in Git history; private definitions and notes live in an ignored namespace.
@@ -69,6 +69,8 @@ to use it without adding tracked integration files.
   repository settings.
 - [Search and review](docs/usage/search-and-review.md) filter notes and produce
   a complete review of every match.
+- [Tasks and saved sheets](docs/usage/tasks-and-sheets.md) track work state,
+  prerequisites, readiness, and deferral, with ordered Markdown instruction sheets.
 - [Shared editing](docs/usage/shared-editing.md) uses revision checks and file
   locking to protect edits from competing CLI and MCP clients.
 - [Resolution and adoption](docs/usage/outcomes.md) track verified fixes and

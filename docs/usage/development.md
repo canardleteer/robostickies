@@ -194,8 +194,11 @@ disabled. The xtask selects the exact example executable from Cargo JSON output,
 including when Cargo uses a custom target directory.
 
 The example creates 256 synthetic private Markdown notes in a temporary store,
-then repeats index rebuilding, filtered listing, and complete review eight
-times. User configuration is disabled. The temporary store is removed when
+including 192 tasks with prerequisite chains, manual/dated deferrals, and one
+preferred sheet. It measures cold indexing, then repeats index rebuilding,
+filtered listing, complete review, ready-task queries, sheet rendering, and
+relationship edits eight times. It prints elapsed durations without timing gates.
+User configuration is disabled. The temporary store is removed when
 the workload finishes or returns an error; the checkout's notes are never read.
 You can run the workload without a profiler:
 

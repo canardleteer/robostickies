@@ -75,6 +75,8 @@ enum Command {
         tags: Vec<String>,
         #[command(flatten)]
         visibility: VisibilityArgs,
+        #[command(flatten)]
+        classification: ClassificationArgs,
     },
     /// Read a note by its full UUID.
     Get { id: String },
@@ -101,6 +103,14 @@ enum Command {
         /// Required last-read revision; re-read and reconcile after a conflict.
         #[arg(long)]
         if_match: String,
+        #[command(flatten)]
+        classification: ClassificationArgs,
+        /// Remove task metadata after reconciling incoming references.
+        #[arg(long, conflicts_with_all = ["task_options", "sheet_options", "clear_sheet"])]
+        clear_task: bool,
+        /// Remove saved sheet metadata.
+        #[arg(long, conflicts_with_all = ["task_options", "sheet_options"])]
+        clear_sheet: bool,
     },
     /// Archive a resolved or obsolete note.
     Archive {
@@ -142,6 +152,16 @@ enum Command {
         #[command(subcommand)]
         command: TagCommand,
     },
+    /// Discover task state, readiness, prerequisites, and deferral.
+    Tasks {
+        #[command(subcommand)]
+        command: TaskCommand,
+    },
+    /// Read saved task sheets in authored order.
+    Sheets {
+        #[command(subcommand)]
+        command: SheetCommand,
+    },
     /// Copy a private note into public storage, retaining the original.
     Publish {
         id: String,
@@ -160,6 +180,8 @@ enum Command {
         /// Required source revision, including for --dry-run.
         #[arg(long)]
         if_match: String,
+        #[command(flatten)]
+        classification: ClassificationArgs,
     },
     /// Read session guidance, tag names and optional descriptions, startup details, and an AGENTS.md snippet.
     Context {
@@ -202,6 +224,12 @@ impl Command {
                 filters.review.scope.unwrap_or(Scope::All)
             }
             Self::Review { filters, .. } => filters.scope.unwrap_or(Scope::Public),
+            Self::Tasks {
+                command: TaskCommand::List { filters, .. },
+            } => filters.review.scope.unwrap_or(Scope::All),
+            Self::Sheets {
+                command: SheetCommand::Render { scope, .. },
+            } => *scope,
             Self::Tags {
                 command: TagCommand::List { scope, .. },
             } => *scope,
@@ -244,6 +272,130 @@ enum TagCommand {
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
     Show,
+}
+
+#[derive(Debug, Args)]
+#[group(id = "task_options", multiple = true, conflicts_with = "sheet_options")]
+struct TaskArgs {
+    /// Classify as a task (new tasks default to todo).
+    #[arg(long)]
+    task: bool,
+    #[arg(long, value_enum)]
+    task_state: Option<TaskState>,
+    /// Replace prerequisites with these task UUIDs; repeat for branching dependencies.
+    #[arg(long, conflicts_with = "clear_requires")]
+    requires: Vec<String>,
+    #[arg(long)]
+    clear_requires: bool,
+    /// Wait until explicitly resumed.
+    #[arg(long, conflicts_with_all = ["defer_until", "resume_task"])]
+    defer: bool,
+    /// Wait until a UTC date or RFC3339 instant.
+    #[arg(long, conflicts_with = "resume_task")]
+    defer_until: Option<String>,
+    #[arg(long)]
+    resume_task: bool,
+}
+
+#[derive(Debug, Args)]
+#[group(id = "sheet_options", multiple = true)]
+struct SheetArgs {
+    /// Classify as a saved task sheet.
+    #[arg(long)]
+    sheet: bool,
+    /// Replace authored membership with these task UUIDs, in this order.
+    #[arg(long = "item", conflicts_with = "clear_items")]
+    items: Vec<String>,
+    #[arg(long)]
+    clear_items: bool,
+    #[arg(long, value_enum)]
+    ordering: Option<SheetOrdering>,
+}
+
+#[derive(Debug, Args)]
+struct ClassificationArgs {
+    #[command(flatten)]
+    task: TaskArgs,
+    #[command(flatten)]
+    sheet: SheetArgs,
+}
+
+impl ClassificationArgs {
+    fn patches(self) -> (Option<TaskPatch>, Option<SheetPatch>) {
+        let t = self.task;
+        let s = self.sheet;
+        let task = (t.task
+            || t.task_state.is_some()
+            || !t.requires.is_empty()
+            || t.clear_requires
+            || t.defer
+            || t.defer_until.is_some()
+            || t.resume_task)
+            .then(|| TaskPatch {
+                state: t.task_state,
+                requires: (t.clear_requires || !t.requires.is_empty()).then_some(t.requires),
+                deferral: if t.defer {
+                    Some(Deferral::Manual)
+                } else {
+                    t.defer_until.map(|until| Deferral::Until { until })
+                },
+                clear_deferral: t.resume_task,
+            });
+        let sheet =
+            (s.sheet || !s.items.is_empty() || s.clear_items || s.ordering.is_some()).then(|| {
+                SheetPatch {
+                    items: (s.clear_items || !s.items.is_empty()).then_some(s.items),
+                    ordering: s.ordering,
+                }
+            });
+        (task, sheet)
+    }
+
+    fn specs(self) -> (Option<TaskSpec>, Option<SheetSpec>) {
+        let (task, sheet) = self.patches();
+        (
+            task.map(|patch| TaskSpec {
+                state: patch.state.unwrap_or_default(),
+                requires: patch.requires.unwrap_or_default(),
+                deferral: patch.deferral,
+            }),
+            sheet.map(|patch| SheetSpec {
+                items: patch.items.unwrap_or_default(),
+                ordering: patch.ordering.unwrap_or_default(),
+            }),
+        )
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum TaskCommand {
+    /// List active unfinished tasks by default. Filters do not hide prerequisite evidence.
+    List {
+        #[command(flatten)]
+        filters: Filters,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long = "state", value_enum, conflicts_with = "all_task_states")]
+        states: Vec<TaskState>,
+        #[arg(long)]
+        all_task_states: bool,
+        #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+        ready: Option<bool>,
+        #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+        blocked: Option<bool>,
+        #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+        deferred: Option<bool>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SheetCommand {
+    /// Render a saved sheet as read-only Markdown; defaults to public scope.
+    Render {
+        id: String,
+        #[arg(long, value_enum, default_value = "public")]
+        scope: Scope,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -432,6 +584,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             body_format,
             tags,
             visibility,
+            classification,
         } => {
             let body = text.read()?.ok_or_else(|| {
                 Error::new(
@@ -439,12 +592,15 @@ pub async fn run(cli: Cli) -> Result<()> {
                     "Supply note text, - for stdin, or --file <path>",
                 )
             })?;
+            let (task, sheet) = classification.specs();
             emit(
                 store.create_note(CreateNote {
                     body,
                     body_format,
                     tags,
                     private: visibility.value(),
+                    task,
+                    sheet,
                 })?,
                 json,
                 saved_note,
@@ -461,24 +617,34 @@ pub async fn run(cli: Cli) -> Result<()> {
             status,
             visibility,
             if_match,
-        } => emit(
-            store.update_note(UpdateNote {
-                id,
-                body: text.read()?,
-                body_format,
-                clear_body_format,
-                tags: if clear_tags || !tags.is_empty() {
-                    Some(tags)
-                } else {
-                    None
-                },
-                status,
-                private: visibility.value(),
-                expected_revision: if_match,
-            })?,
-            json,
-            saved_note,
-        ),
+            classification,
+            clear_task,
+            clear_sheet,
+        } => {
+            let (task, sheet) = classification.patches();
+            emit(
+                store.update_note(UpdateNote {
+                    id,
+                    body: text.read()?,
+                    body_format,
+                    clear_body_format,
+                    tags: if clear_tags || !tags.is_empty() {
+                        Some(tags)
+                    } else {
+                        None
+                    },
+                    status,
+                    private: visibility.value(),
+                    expected_revision: if_match,
+                    task,
+                    sheet,
+                    clear_task,
+                    clear_sheet,
+                })?,
+                json,
+                saved_note,
+            )
+        }
         Command::Archive { id, if_match } => emit(
             store.update_note(UpdateNote {
                 id,
@@ -506,6 +672,69 @@ pub async fn run(cli: Cli) -> Result<()> {
             store.list_notes(filters.query(Some(text)))?,
             json,
             format_page,
+        ),
+        Command::Tasks {
+            command:
+                TaskCommand::List {
+                    filters,
+                    text,
+                    states,
+                    all_task_states,
+                    ready,
+                    blocked,
+                    deferred,
+                },
+        } => emit(
+            store.list_tasks(TaskQuery {
+                notes: filters.query(text),
+                states,
+                all_task_states,
+                ready,
+                blocked,
+                deferred,
+            })?,
+            json,
+            |page| {
+                let mut text = format!(
+                    "Tasks: {}. Evaluated at: {}.\n",
+                    page.total, page.evaluated_at
+                );
+                for task in &page.tasks {
+                    text.push_str(&format!(
+                        "\n{} [{}; ready={}; blocked={}; deferred={}]\n{}\n",
+                        task.note.id,
+                        task.task.state.as_str(),
+                        task.ready,
+                        task.blocked,
+                        task.active_deferral.is_some(),
+                        task.note.body
+                    ));
+                    for blocker in &task.blockers {
+                        text.push_str(&format!(
+                            "  {}: {}\n",
+                            blocker.reason,
+                            blocker.path.join(" -> ")
+                        ));
+                    }
+                }
+                for diagnostic in &page.diagnostics {
+                    text.push_str(&format!("\n{}: {}\n", diagnostic.path, diagnostic.message));
+                }
+                if let Some(cursor) = &page.next_cursor {
+                    text.push_str(&format!("\nNext cursor: {cursor}\n"));
+                }
+                text
+            },
+        ),
+        Command::Sheets {
+            command: SheetCommand::Render { id, scope },
+        } => emit(
+            store.render_task_sheet(RenderTaskSheet {
+                id,
+                scope: Some(scope),
+            })?,
+            json,
+            |sheet| sheet.markdown.clone(),
         ),
         Command::Review { filters, text } => {
             emit(store.review(filters.query(text).into())?, json, |review| {
@@ -576,33 +805,39 @@ pub async fn run(cli: Cli) -> Result<()> {
             tags,
             clear_tags,
             if_match,
-        } => emit(
-            store.publish_note(PublishNote {
-                id,
-                dry_run,
-                body: text.read()?,
-                body_format,
-                tags: if clear_tags || !tags.is_empty() {
-                    Some(tags)
-                } else {
-                    None
-                },
-                expected_revision: if_match,
-            })?,
-            json,
-            |result| {
-                format!(
-                    "{}\n{}{}",
-                    if result.dry_run {
-                        "Preview (no public copy saved)"
+            classification,
+        } => {
+            let (task, sheet) = classification.specs();
+            emit(
+                store.publish_note(PublishNote {
+                    id,
+                    dry_run,
+                    body: text.read()?,
+                    body_format,
+                    tags: if clear_tags || !tags.is_empty() {
+                        Some(tags)
                     } else {
-                        "Published public copy"
+                        None
                     },
-                    format_note(&result.note),
-                    warnings(&result.warnings)
-                )
-            },
-        ),
+                    expected_revision: if_match,
+                    task,
+                    sheet,
+                })?,
+                json,
+                |result| {
+                    format!(
+                        "{}\n{}{}",
+                        if result.dry_run {
+                            "Preview (no public copy saved)"
+                        } else {
+                            "Published public copy"
+                        },
+                        format_note(&result.note),
+                        warnings(&result.warnings)
+                    )
+                },
+            )
+        }
         Command::Context { scope } => emit(store.context(scope)?, json, |context| {
             let mut text = context.guidance.clone();
             if let Some(root) = &context.repository_root {

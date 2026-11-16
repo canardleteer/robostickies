@@ -35,6 +35,8 @@ fn tag(store: &Store, name: &str, private: bool) -> Tag {
 fn note(store: &Store, body: &str, tags: &[&str]) -> Note {
     store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body_format: None,
             body: body.into(),
             tags: tags.iter().map(|t| (*t).into()).collect(),
@@ -75,6 +77,8 @@ fn git(root: &Path, args: &[&str]) -> String {
 
 fn publish(source: &Note, dry_run: bool) -> PublishNote {
     PublishNote {
+        task: None,
+        sheet: None,
         body_format: None,
         id: source.id.clone(),
         dry_run,
@@ -234,6 +238,8 @@ fn any_private_tag_wins_and_public_names_never_shadow_private_names() {
         1
     );
     let invalid = CreateNote {
+        task: None,
+        sheet: None,
         body_format: None,
         body: "Must remain private".into(),
         tags: vec!["private:tooling".into()],
@@ -243,6 +249,8 @@ fn any_private_tag_wins_and_public_names_never_shadow_private_names() {
     assert_eq!(
         store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Unknown".into(),
                 tags: vec!["missing".into()],
@@ -305,6 +313,8 @@ fn private_tag_edits_move_public_notes_without_losing_hints_or_metadata() {
     tag(&store, "local", true);
     let public = store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body: "Reviewed public body\n".into(),
             body_format: Some("custom/plain".into()),
             tags: vec!["papercut".into()],
@@ -684,6 +694,8 @@ fn updates_and_publications_require_current_nonblank_revisions() {
     let (_temp, store) = fresh();
     let source = store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body_format: None,
             body: "Private original".into(),
             tags: vec![],
@@ -804,6 +816,8 @@ fn a_saved_note_survives_index_failure_without_a_duplicate_retry() {
     fs::create_dir(&path).unwrap();
     let saved = store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body_format: None,
             body: "Save despite cache failure".into(),
             tags: vec![],
@@ -960,6 +974,8 @@ fn concurrent_writers_keep_every_note_and_do_not_hold_the_index_open() {
                     let mut busy_retries = 0;
                     loop {
                         let result = store.create_note(CreateNote {
+                            task: None,
+                            sheet: None,
                             body_format: None,
                             body: format!("Worker {worker} note {i}"),
                             tags: vec!["papercut".into()],
@@ -1058,6 +1074,8 @@ fn local_excludes_work_in_linked_git_worktrees() {
     assert!(!store.directory().join(".gitignore").exists());
     let private = store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body_format: None,
             body: "Private in worktree".into(),
             tags: vec![],
@@ -1180,6 +1198,8 @@ fn invalid_paths_and_bodies_are_rejected_before_writes() {
     assert_eq!(
         store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "  ".into(),
                 tags: vec![],
@@ -1199,6 +1219,8 @@ fn missing_git_exclusions_prevent_private_writes_and_can_be_repaired() {
     store.init(InitOptions::default()).unwrap();
     fs::remove_file(store.directory().join(".gitignore")).unwrap();
     let input = CreateNote {
+        task: None,
+        sheet: None,
         body_format: None,
         body: "Keep local".into(),
         tags: vec![],
@@ -1319,6 +1341,8 @@ fn outcome_tags_preserve_visibility_and_survive_edits_and_archiving() {
     let public = note(&store, "Public defect", &["papercut"]);
     let private = store
         .create_note(CreateNote {
+            task: None,
+            sheet: None,
             body_format: None,
             body: "Local reusable guidance".into(),
             tags: vec!["paperclip".into()],
@@ -1394,6 +1418,8 @@ fn local_excludes_support_explicit_nested_roots_with_git_pattern_characters() {
     assert_eq!(
         store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Nested private note".into(),
                 tags: vec![],
@@ -1462,6 +1488,8 @@ fn symlinks_do_not_escape_the_repository_or_enter_public_reports() {
     assert!(
         store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "must not escape".into(),
                 tags: vec![],
