@@ -452,6 +452,74 @@ fn public_incoming_edges_prevent_privatization_and_private_only_rows_need_local_
 }
 
 #[test]
+fn sheet_member_diagnostics_are_unique_and_retain_distinct_graph_problems() {
+    for private in [false, true] {
+        let (_root, store) = setup();
+        let missing = task(&store, "Deleted member", &[], private);
+        let malformed = task(&store, "Malformed member", &[], private);
+        let blocked = task(&store, "Dependent member", &[&missing], private);
+        let plan = sheet(
+            &store,
+            &[&missing, &malformed, &blocked],
+            SheetOrdering::Preferred,
+            private,
+        );
+        let original_plan = fs::read(store.directory().join(&plan.path)).unwrap();
+        let original_blocked = fs::read(store.directory().join(&blocked.path)).unwrap();
+        fs::remove_file(store.directory().join(&missing.path)).unwrap();
+        fs::write(
+            store.directory().join(&malformed.path),
+            "Malformed source\n",
+        )
+        .unwrap();
+
+        let result = render(
+            &store,
+            &plan,
+            if private { Scope::All } else { Scope::Public },
+        );
+        assert!(!result.complete && result.next_task.is_none());
+        assert!(result.rows[0].task.is_none() && result.rows[1].task.is_none());
+        assert!(result.context.iter().any(|row| row.id == missing.id));
+        let member_diagnostics: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.path == plan.path)
+            .collect();
+        assert_eq!(member_diagnostics.len(), 2);
+        for member in [&missing, &malformed] {
+            assert_eq!(
+                member_diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.message.contains(&member.id))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                result
+                    .markdown
+                    .matches(&format!("Sheet item {}", member.id))
+                    .count(),
+                1
+            );
+        }
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.path == blocked.path
+                && diagnostic.code == "unresolved_reference"
+                && diagnostic.message.contains(&missing.id)
+        }));
+        assert_eq!(
+            fs::read(store.directory().join(&plan.path)).unwrap(),
+            original_plan
+        );
+        assert_eq!(
+            fs::read(store.directory().join(&blocked.path)).unwrap(),
+            original_blocked
+        );
+    }
+}
+
+#[test]
 fn direct_edits_deletions_and_duplicate_ids_have_scoped_diagnostics_and_incomplete_sheets() {
     let (_root, store) = setup();
     let a = task(&store, "Public A", &[], false);
