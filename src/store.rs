@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::{
     config::{self, Configuration},
     document,
+    graph::{self, Graph},
     index::{self, Index},
     migration::{self, Change},
     model::*,
@@ -37,7 +38,9 @@ pub const DISCOVERY_GUIDANCE: &str = concat!(
     "Read tag names, optional descriptions, and full startup guidance. Record friction with papercut and useful ",
     "successes with paperclip; other tags and general notes are welcome. Private tags use ",
     "private:<name> and force ignored local storage. Public review includes only public ",
-    "notes; publish_note makes an explicit public copy. Read get_context for details and ",
+    "notes; publish_note makes an explicit public copy. Discover ready work with list_tasks ",
+    "and read saved instructions with render_task_sheet. Task/sheet writes require v1alpha5. ",
+    "Read get_context for details and ",
     "a portable AGENTS.md snippet. Use init_store if the repository is not initialized."
 );
 
@@ -120,6 +123,24 @@ contains `id`, `created_at`, `updated_at` (RFC3339), `tags`, and `status`
 (`active` or `archived`); the body is nonempty UTF-8 text, preferably Markdown
 or plain text. Optional `body_format` metadata is advisory and never interprets
 the body. Additional metadata is retained when editing. The files are authoritative; the redb index is disposable.
+
+Discover eligible work with `tasks list --ready` / `list_tasks` and read saved
+instructions with `sheets render ID` / `render_task_sheet`. Tasks have independent
+`todo`, `in_progress`, `done`, and `cancelled` states, explicit `requires` UUIDs,
+and optional manual or dated deferral. Readiness uses the complete prerequisite
+graph and the returned evaluation time; only done prerequisites satisfy it.
+Sheet membership preserves order without creating dependencies. Only complete
+preferred sheets suggest their first ready item; display sheets do not.
+Rendering defaults to public scope; use explicit all for mixed local sheets.
+Edit source notes by UUID and last-read revision; rendered checkboxes are read-only.
+
+Create with typed `task` / `sheet` fields (`add --task` / `add --sheet`), patch
+with `update_note` / `update`, and clear classification explicitly. Reconcile
+incoming references before clearing or privatizing a public task. Public graphs
+use only public evidence. Publication strips structured data by default; supply
+an explicit reviewed public specification to publish a task or sheet.
+Task/sheet writes require an explicit upgrade to v1alpha5. Older stores keep
+custom metadata unchanged; upgrade previews diagnose reserved-key collisions.
 
 Legacy YAML repairs run only through an explicit store upgrade. Ordinary edits
 reject malformed legacy frontmatter instead of silently migrating it. Preview an
@@ -753,6 +774,17 @@ impl Store {
 
     fn prepare_upgrade(&self, original: &str, source: DataVersion) -> Result<Vec<Change>> {
         let (notes, tags) = index::validated_sources(&self.directory(), true)?;
+        for note in &notes {
+            if note.metadata.contains_key("task") || note.metadata.contains_key("sheet") {
+                return Err(Error::new(
+                    "invalid_document",
+                    format!(
+                        "{}: task/sheet metadata collision; relocate custom metadata before upgrading to v1alpha5",
+                        note.path
+                    ),
+                ));
+            }
+        }
         let mut changes = Vec::new();
         let migrated = version::apply_migrations(original, source, |candidate, target| {
             config::validate_migration(candidate, target)?;
@@ -920,6 +952,7 @@ impl Store {
     /// Record a note, routing all private-tagged content into private storage.
     pub fn create_note(&self, mut input: CreateNote) -> Result<SavedNote> {
         let _guard = self.lock(false)?;
+        self.require_task_version(input.task.is_some() || input.sheet.is_some())?;
         let private_tag = self.validate_tags(&mut input.tags)?;
         if private_tag && input.private == Some(false) {
             return Err(Error::new(
@@ -934,6 +967,10 @@ impl Store {
         };
         let mut note = self.new_note(input.body, input.tags, visibility, NoteStatus::Active)?;
         document::set_body_format(&mut note.metadata, input.body_format.as_deref(), false)?;
+        if input.task.is_some() || input.sheet.is_some() {
+            graph::set_classification(&mut note, input.task, input.sheet)?;
+            self.source_graph()?.validate_edit(None, &note)?;
+        }
         let note = self.save_new(note)?;
         Ok(SavedNote {
             note,
@@ -955,6 +992,13 @@ impl Store {
         let _guard = self.lock(false)?;
         let (mut note, original) = self.read_note(&input.id)?;
         check_revision(&note, &input.expected_revision)?;
+        let before = note.clone();
+        self.require_task_version(
+            input.task.is_some() || input.sheet.is_some() || input.clear_task || input.clear_sheet,
+        )?;
+        if self.configuration_unlocked()?.data_version.tasks() {
+            graph::patch(&mut note, &input)?;
+        }
         document::set_body_format(
             &mut note.metadata,
             input.body_format.as_deref(),
@@ -991,6 +1035,11 @@ impl Store {
         }
         if input.private == Some(true) {
             note.visibility = Visibility::Private;
+        }
+        if self.configuration_unlocked()?.data_version.tasks()
+            && (before.metadata != note.metadata || before.visibility != note.visibility)
+        {
+            self.source_graph()?.validate_edit(Some(&before), &note)?;
         }
         note.updated_at = document::now();
         note.path = format!(
@@ -1034,6 +1083,7 @@ impl Store {
         let _guard = self.lock(false)?;
         let (source, _) = self.read_note(&input.id)?;
         check_revision(&source, &input.expected_revision)?;
+        self.require_task_version(input.task.is_some() || input.sheet.is_some())?;
         if source.visibility != Visibility::Private {
             return Err(Error::new(
                 "invalid_input",
@@ -1061,6 +1111,10 @@ impl Store {
             source.status,
         )?;
         document::set_body_format(&mut note.metadata, input.body_format.as_deref(), false)?;
+        if input.task.is_some() || input.sheet.is_some() {
+            graph::set_classification(&mut note, input.task, input.sheet)?;
+            self.source_graph()?.validate_edit(None, &note)?;
+        }
         let (note, warnings) = if input.dry_run {
             let text = document::render_note(&note)?;
             (
@@ -1083,6 +1137,50 @@ impl Store {
     pub fn list_notes(&self, query: Query) -> Result<NotePage> {
         let _guard = self.lock_for_scope(false, query.scope.unwrap_or(Scope::All))?;
         self.index(false)?.query(&query).map_err(cache_error)
+    }
+
+    fn require_task_version(&self, requested: bool) -> Result<()> {
+        let config = self.configuration_unlocked()?;
+        if requested && !config.data_version.tasks() {
+            return Err(Error::new("upgrade_required", "Task and sheet writes require an explicit upgrade to v1alpha5; preview with upgrade --dry-run or upgrade_store(dry_run=true)").with_upgrade(config.upgrade));
+        }
+        Ok(())
+    }
+
+    fn source_graph(&self) -> Result<Graph> {
+        match self
+            .index(false)
+            .and_then(|index| index.graph().map_err(cache_error))
+        {
+            Ok(graph) => Ok(graph),
+            Err(_) => index::source_graph(&self.directory()),
+        }
+    }
+
+    /// Query tasks with the complete prerequisite graph and one captured UTC time.
+    /// Defaults to active todo/in_progress tasks across all namespaces. Markdown is
+    /// synchronized first; diagnostics remain scoped, and readiness is never saved.
+    /// Returns input, configuration, lock, or index failures without editing sources.
+    pub fn list_tasks(&self, query: TaskQuery) -> Result<TaskPage> {
+        let _guard = self.lock_for_scope(false, query.notes.scope.unwrap_or(Scope::All))?;
+        let at = chrono::Utc::now();
+        self.index(false)?
+            .list_tasks(&query, at)
+            .map_err(cache_error)
+    }
+
+    /// Render a saved instruction sheet, preserving authored order and placeholders.
+    /// Defaults to public scope. Private/mixed rows require an explicit local scope.
+    /// Full bodies and revisions are read-only; only complete preferred sheets suggest
+    /// ready work. Returns input, not_found, source, lock, or index errors.
+    pub fn render_task_sheet(&self, input: RenderTaskSheet) -> Result<TaskSheet> {
+        let scope = input.scope.unwrap_or(Scope::Public);
+        let _guard = self.lock_for_scope(false, scope)?;
+        document::note_id(&input.id)?;
+        let at = chrono::Utc::now();
+        self.index(false)?
+            .render_task_sheet(&input.id, scope, at)
+            .map_err(cache_error)
     }
 
     /// Build complete deterministic review material. Default visibility is public.
@@ -1198,7 +1296,7 @@ impl Store {
 
     /// Portable paragraph callers may place into their own AGENTS.md format.
     pub fn agents_snippet(&self) -> String {
-        "At the start of work, run `robostickies context` or call the MCP `get_context` tool. Inspect upgrade advice and warnings even when validation is healthy, then read tag names, optional descriptions, and startup guidance. Use MCP `version` to identify the running server after installation; the CLI's version does not identify an existing MCP process. Record concrete friction and useful wins with the defined tags while continuing your task. See [.robostickies/README.md](.robostickies/README.md) for details. Keep private observations in the private namespace; publish an explicit public copy before including them in public review.\n".into()
+        "At the start of work, run `robostickies context` or call the MCP `get_context` tool. Inspect upgrade advice and warnings even when validation is healthy, then read tag names, optional descriptions, and startup guidance. Use MCP `version` to identify the running server after installation; the CLI's version does not identify an existing MCP process. Discover ready work with `tasks list --ready` or MCP `list_tasks`, and read saved instructions with `sheets render` or `render_task_sheet`. Record concrete friction and useful wins with the defined tags while continuing your task. See [.robostickies/README.md](.robostickies/README.md) for details. Keep private observations in the private namespace; publish an explicit public copy before including them in public review.\n".into()
     }
 
     /// Rebuild the entire disposable index and return source validation results.
@@ -1458,6 +1556,8 @@ mod failure_tests {
         let store = Store::with_user_config(temp.path(), None).unwrap();
         assert!(!store.configuration().unwrap().upgrade_available);
         let create = CreateNote {
+            task: None,
+            sheet: None,
             body_format: None,
             body: "Absent store fixture".into(),
             tags: vec![],
@@ -1469,6 +1569,8 @@ mod failure_tests {
             store.update_note(UpdateNote::default()).unwrap_err(),
             store
                 .publish_note(PublishNote {
+                    task: None,
+                    sheet: None,
                     body_format: None,
                     id: "invalid".into(),
                     body: None,
@@ -1514,6 +1616,8 @@ mod failure_tests {
             .unwrap();
         let public = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Public fixture".into(),
                 tags: vec![],
@@ -1523,6 +1627,8 @@ mod failure_tests {
             .note;
         let local = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Local fixture".into(),
                 tags: vec![tag.name.clone()],
@@ -1556,6 +1662,8 @@ mod failure_tests {
             );
         }
         let request = |note: &Note, tags| PublishNote {
+            task: None,
+            sheet: None,
             body_format: None,
             id: note.id.clone(),
             body: None,
@@ -1601,6 +1709,8 @@ mod input_failure_tests {
         assert_eq!(
             store
                 .create_note(CreateNote {
+                    task: None,
+                    sheet: None,
                     body_format: None,
                     body: " ".into(),
                     tags: vec![],
@@ -1613,6 +1723,8 @@ mod input_failure_tests {
         assert_eq!(
             store
                 .create_note(CreateNote {
+                    task: None,
+                    sheet: None,
                     body_format: None,
                     body: "Rejected tag fixture".into(),
                     tags: vec!["undefined".into()],
@@ -1637,6 +1749,8 @@ mod input_failure_tests {
         );
         let note = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Guarded fixture".into(),
                 tags: vec![],
@@ -1669,6 +1783,8 @@ mod input_failure_tests {
             assert_eq!(
                 store
                     .publish_note(PublishNote {
+                        task: None,
+                        sheet: None,
                         body_format: None,
                         id: id.into(),
                         expected_revision: revision.into(),
@@ -1700,6 +1816,8 @@ mod input_failure_tests {
             assert_eq!(
                 store
                     .publish_note(PublishNote {
+                        task: None,
+                        sheet: None,
                         body_format: None,
                         id: note.id.clone(),
                         expected_revision: note.revision.clone(),
@@ -1776,6 +1894,8 @@ mod filesystem_failure_tests {
         assert_eq!(fs::read_to_string(&agents).unwrap(), broken);
         let note = store
             .create_note(CreateNote {
+                task: None,
+                sheet: None,
                 body_format: None,
                 body: "Filesystem fixture".into(),
                 tags: vec![],

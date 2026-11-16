@@ -18,6 +18,8 @@ Commands:
   search     Search note bodies for a case-insensitive literal substring
   review     Produce complete review material; visibility defaults to public
   tags       Define tags for labeling notes, with optional descriptions and guidance
+  tasks      Discover task state, readiness, prerequisites, and deferral
+  sheets     Read saved task sheets in authored order
   publish    Copy a private note into public storage, retaining the original
   context    Read session guidance, tag names and optional descriptions, startup details, and an AGENTS.md snippet
   config     Inspect effective configuration and its source files
@@ -53,6 +55,17 @@ Options:
       --no-user-config             Disable user configuration for reproducible automation
       --private                    Keep the new tag or note in ignored private storage
       --public                     Select public creation; private note tags still require private storage
+      --task                       Classify as a task (new tasks default to todo)
+      --task-state <TASK_STATE>    [possible values: todo, in_progress, done, cancelled]
+      --requires <REQUIRES>        Replace prerequisites with these task UUIDs; repeat for branching dependencies
+      --clear-requires
+      --defer                      Wait until explicitly resumed
+      --defer-until <DEFER_UNTIL>  Wait until a UTC date or RFC3339 instant
+      --resume-task
+      --sheet                      Classify as a saved task sheet
+      --item <ITEMS>               Replace authored membership with these task UUIDs, in this order
+      --clear-items
+      --ordering <ORDERING>        [possible values: display, preferred]
   -h, --help                       Print help
 
 $ robostickies update --help
@@ -78,6 +91,19 @@ Options:
       --private                    Keep the new tag or note in ignored private storage
       --public                     Select public creation; private note tags still require private storage
       --if-match <IF_MATCH>        Required last-read revision; re-read and reconcile after a conflict
+      --task                       Classify as a task (new tasks default to todo)
+      --task-state <TASK_STATE>    [possible values: todo, in_progress, done, cancelled]
+      --requires <REQUIRES>        Replace prerequisites with these task UUIDs; repeat for branching dependencies
+      --clear-requires
+      --defer                      Wait until explicitly resumed
+      --defer-until <DEFER_UNTIL>  Wait until a UTC date or RFC3339 instant
+      --resume-task
+      --sheet                      Classify as a saved task sheet
+      --item <ITEMS>               Replace authored membership with these task UUIDs, in this order
+      --clear-items
+      --ordering <ORDERING>        [possible values: display, preferred]
+      --clear-task                 Remove task metadata after reconciling incoming references
+      --clear-sheet                Remove saved sheet metadata
   -h, --help                       Print help
 
 $ robostickies tags --help
@@ -169,6 +195,59 @@ Options:
       --tag <TAGS>                 Replace the public tag set; private tags are forbidden
       --clear-tags
       --if-match <IF_MATCH>        Required source revision, including for --dry-run
+      --task                       Classify as a task (new tasks default to todo)
+      --task-state <TASK_STATE>    [possible values: todo, in_progress, done, cancelled]
+      --requires <REQUIRES>        Replace prerequisites with these task UUIDs; repeat for branching dependencies
+      --clear-requires
+      --defer                      Wait until explicitly resumed
+      --defer-until <DEFER_UNTIL>  Wait until a UTC date or RFC3339 instant
+      --resume-task
+      --sheet                      Classify as a saved task sheet
+      --item <ITEMS>               Replace authored membership with these task UUIDs, in this order
+      --clear-items
+      --ordering <ORDERING>        [possible values: display, preferred]
+  -h, --help                       Print help
+
+$ robostickies tasks list --help
+List active unfinished tasks by default. Filters do not hide prerequisite evidence
+
+Usage: robostickies tasks list [OPTIONS]
+
+Options:
+      --repo <REPO>                 Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --scope <SCOPE>               [possible values: public, private, all]
+      --json                        Emit structured JSON instead of human-readable output
+      --tag <TAGS>                  Require every specified tag
+      --exclude-tag <EXCLUDE_TAGS>
+      --user-config <USER_CONFIG>   Override the platform-standard user configuration file
+      --no-user-config              Disable user configuration for reproducible automation
+      --status <STATUS>             [default: active] [possible values: active, archived, all]
+      --since <SINCE>               Inclusive creation-date bound (UTC YYYY-MM-DD or RFC3339)
+      --until <UNTIL>               Exclusive creation-date bound (UTC YYYY-MM-DD or RFC3339)
+      --limit <LIMIT>               [default: 50]
+      --cursor <CURSOR>
+      --text <TEXT>
+      --state <STATES>              [possible values: todo, in_progress, done, cancelled]
+      --all-task-states
+      --ready[=<READY>]             [possible values: true, false]
+      --blocked[=<BLOCKED>]         [possible values: true, false]
+      --deferred[=<DEFERRED>]       [possible values: true, false]
+  -h, --help                        Print help
+
+$ robostickies sheets render --help
+Render a saved sheet as read-only Markdown; defaults to public scope
+
+Usage: robostickies sheets render [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+Options:
+      --repo <REPO>                Directory override; defaults to the Git root containing the startup CWD, or that CWD outside Git
+      --scope <SCOPE>              [default: public] [possible values: public, private, all]
+      --json                       Emit structured JSON instead of human-readable output
+      --user-config <USER_CONFIG>  Override the platform-standard user configuration file
+      --no-user-config             Disable user configuration for reproducible automation
   -h, --help                       Print help
 
 $ robostickies upgrade --help

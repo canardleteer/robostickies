@@ -5,12 +5,13 @@ repository's data version. It covers both namespaces. New stores write:
 
 ```toml
 format_version = 1
-data_version = "v1alpha4"
+data_version = "v1alpha5"
 ```
 
-An absent `data_version` means `v1alpha1`. All four versions remain readable and
+An absent `data_version` means `v1alpha1`. All five versions remain readable and
 writable for valid sources. Legacy tag creation requires a supplied description;
 name-only creation returns `upgrade_required` until an explicit upgrade.
+Task/sheet writes require `v1alpha5`; older stores retain ordinary note operations.
 Installing, opening, or initializing an existing store never migrates
 it silently. Optional body hints use existing additional metadata and require
 neither a version bump nor a bulk rewrite.
@@ -34,7 +35,7 @@ guidance directs agents to report applicable recommendations and offer explicit
 preview, upgrade, or deferral choices. A saved optional deferral suppresses the
 reminder; it does not change the source version or requirement.
 
-An already-current `v1alpha4` store needs no migration when the executable is
+An already-current `v1alpha5` store needs no migration when the executable is
 updated. Initialization is the appropriate action for an absent store. Rebuild
 the cache when diagnostics or recovery require it, rather than after every install.
 
@@ -124,6 +125,15 @@ writers keep that representation when a description is supplied. Current stores
 use optional `description` and reject `topic`. Self-explanatory tags usually do
 not need a description; new name-only tags can be created after the upgrade.
 
+The `v1alpha4` → `v1alpha5` step reserves `task` and `sheet` frontmatter keys
+for structured tasks and saved instruction sheets. Any existing note with either
+key is a collision, including null or otherwise task-shaped custom values. The
+preview and apply both stop; relocate custom metadata and retry. Valid note
+sources and customized guidance remain byte-identical. New tools never infer
+tasks from old metadata, tags, or checkboxes. Older executables reject the new
+version, preventing edits that bypass graph and privacy checks. See
+[tasks and sheets](tasks-and-sheets.md). The disposable cache uses a new generation.
+
 The upgrade prepares and validates all replacements before writing. It writes
 note repairs and tag renames first and commits the shared version marker last. An interruption before
 that commit leaves the older version selected; retry the explicit upgrade to
@@ -171,7 +181,7 @@ reject that setting; this does not require a repository data migration.
 ## Data version policy
 
 `data_version` identifies how authoritative repository data is interpreted and
-safely preserved. The current value is `v1alpha4`. Change it when existing stored
+safely preserved. The current value is `v1alpha5`. Change it when existing stored
 sources need migration, or readers and writers for the current version cannot
 safely interpret and preserve the new representation, including:
 

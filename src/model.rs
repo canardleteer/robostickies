@@ -7,6 +7,8 @@ use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use crate::tasks::*;
+
 /// An operation failure with a stable machine-readable code.
 #[derive(Debug, Clone, Serialize, thiserror::Error)]
 #[error("{code}: {message}")]
@@ -296,7 +298,7 @@ pub struct NotePage {
 }
 
 /// Input for creating a brief note.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateNote {
     /// Nonempty UTF-8 text. Markdown or plain text is preferred.
@@ -308,6 +310,22 @@ pub struct CreateNote {
     pub tags: Vec<String>,
     /// Omit to derive privacy from tags. False cannot override a private tag.
     pub private: Option<bool>,
+    /// Explicit task classification; requires v1alpha5. Mutually exclusive with sheet.
+    #[serde(
+        default,
+        deserialize_with = "supplied",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "TaskSpec")]
+    pub task: Option<TaskSpec>,
+    /// Saved ordered task membership; requires v1alpha5.
+    #[serde(
+        default,
+        deserialize_with = "supplied",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "SheetSpec")]
+    pub sheet: Option<SheetSpec>,
 }
 
 /// Patch a note. Unspecified fields retain their current values.
@@ -328,6 +346,26 @@ pub struct UpdateNote {
     pub private: Option<bool>,
     /// Required last-read revision. A stale value rejects the edit without changing sources.
     pub expected_revision: String,
+    /// Patch or convert an ordinary note into a task. Null is invalid.
+    #[serde(
+        default,
+        deserialize_with = "supplied",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "TaskPatch")]
+    pub task: Option<TaskPatch>,
+    #[serde(default)]
+    pub clear_task: bool,
+    /// Patch or convert an ordinary note into a saved sheet. Null is invalid.
+    #[serde(
+        default,
+        deserialize_with = "supplied",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "SheetPatch")]
+    pub sheet: Option<SheetPatch>,
+    #[serde(default)]
+    pub clear_sheet: bool,
 }
 
 /// Define a tag. `name` is an unqualified filename slug.
@@ -350,7 +388,7 @@ pub struct CreateTag {
 }
 
 /// Options for copying a private note into public storage.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PublishNote {
     pub id: String,
@@ -364,6 +402,22 @@ pub struct PublishNote {
     pub tags: Option<Vec<String>>,
     /// Required last-read source revision, including for previews.
     pub expected_revision: String,
+    /// Complete reviewed public task specification. Source task data is otherwise stripped.
+    #[serde(
+        default,
+        deserialize_with = "supplied",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "TaskSpec")]
+    pub task: Option<TaskSpec>,
+    /// Complete reviewed public membership; source sheet data is otherwise stripped.
+    #[serde(
+        default,
+        deserialize_with = "supplied",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "SheetSpec")]
+    pub sheet: Option<SheetSpec>,
 }
 
 /// A saved note remains successful even if refreshing the disposable index fails.

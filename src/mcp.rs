@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Store,
     model::{
-        CreateNote, CreateTag, InitOptions, PublishNote, Query, ReviewQuery, Scope, UpdateNote,
-        UpgradeOptions,
+        CreateNote, CreateTag, InitOptions, PublishNote, Query, RenderTaskSheet, ReviewQuery,
+        Scope, TaskQuery, UpdateNote, UpgradeOptions,
     },
     store::DISCOVERY_GUIDANCE,
 };
@@ -149,6 +149,28 @@ impl StickyServer {
     #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::model::NotePage>(), annotations(read_only_hint = true, open_world_hint = false))]
     async fn list_notes(&self, Parameters(input): Parameters<Query>) -> CallToolResult {
         self.execute(move |store| store.list_notes(input)).await
+    }
+
+    /// Discover tasks with readiness, complete prerequisite paths, and active deferrals.
+    /// Defaults to active todo/in_progress tasks across all visibility. Note filters,
+    /// states, ready, blocked, and deferred combine with AND; blockers outside the page
+    /// still count. Readiness is evaluated at one returned UTC instant; re-evaluate before acting.
+    #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::tasks::TaskPage>(), annotations(read_only_hint = true, open_world_hint = false))]
+    async fn list_tasks(&self, Parameters(input): Parameters<TaskQuery>) -> CallToolResult {
+        self.execute(move |store| store.list_tasks(input)).await
+    }
+
+    /// Render a saved task sheet in authored order, including full bodies and revisions.
+    /// Defaults to public scope; use all for a complete mixed local sheet. Unavailable
+    /// members retain placeholders. Only complete preferred sheets suggest a ready task.
+    /// Checkboxes are a read-only view; edit source tasks through update_note.
+    #[tool(output_schema = rmcp::handler::server::common::schema_for_output::<crate::tasks::TaskSheet>(), annotations(read_only_hint = true, open_world_hint = false))]
+    async fn render_task_sheet(
+        &self,
+        Parameters(input): Parameters<RenderTaskSheet>,
+    ) -> CallToolResult {
+        self.execute(move |store| store.render_task_sheet(input))
+            .await
     }
 
     /// Prepare complete deterministic review material for summarization. Visibility

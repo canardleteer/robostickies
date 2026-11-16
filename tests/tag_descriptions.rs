@@ -165,7 +165,14 @@ fn descriptions_are_optional_verbatim_nonblank_and_separate_from_usage_guidance(
 
 #[test]
 fn legacy_creation_preserves_representation_and_name_only_creation_never_writes() {
-    for version in SUPPORTED.into_iter().filter(|version| *version != CURRENT) {
+    for version in SUPPORTED.into_iter().filter(|version| {
+        matches!(
+            version,
+            robostickies::version::DataVersion::V1Alpha1
+                | robostickies::version::DataVersion::V1Alpha2
+                | robostickies::version::DataVersion::V1Alpha3
+        )
+    }) {
         let temp = tempfile::tempdir().unwrap();
         let store = setup(temp.path(), version.as_str());
         for private in [false, true] {
@@ -210,7 +217,14 @@ fn legacy_creation_preserves_representation_and_name_only_creation_never_writes(
 
 #[test]
 fn every_upgrade_path_renames_only_tag_keys_and_preserves_values_and_source_bytes() {
-    for version in SUPPORTED.into_iter().filter(|version| *version != CURRENT) {
+    for version in SUPPORTED.into_iter().filter(|version| {
+        matches!(
+            version,
+            robostickies::version::DataVersion::V1Alpha1
+                | robostickies::version::DataVersion::V1Alpha2
+                | robostickies::version::DataVersion::V1Alpha3
+        )
+    }) {
         for newline in ["\n", "\r\n"] {
             let temp = tempfile::tempdir().unwrap();
             let store = setup(temp.path(), version.as_str());
@@ -325,7 +339,14 @@ fn collisions_and_unsupported_renames_report_the_source_without_overwriting() {
 
 #[test]
 fn interrupted_tag_upgrades_are_retryable_but_ordinary_legacy_readers_stay_strict() {
-    for version in SUPPORTED.into_iter().filter(|version| *version != CURRENT) {
+    for version in SUPPORTED.into_iter().filter(|version| {
+        matches!(
+            version,
+            robostickies::version::DataVersion::V1Alpha1
+                | robostickies::version::DataVersion::V1Alpha2
+                | robostickies::version::DataVersion::V1Alpha3
+        )
+    }) {
         let temp = tempfile::tempdir().unwrap();
         let store = setup(temp.path(), version.as_str());
         for (directory, name, header) in [

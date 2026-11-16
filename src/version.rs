@@ -24,17 +24,20 @@ pub enum DataVersion {
     V1Alpha3,
     /// Tags use optional descriptions instead of required topics.
     V1Alpha4,
+    /// Task/sheet metadata and namespace-safe graph integrity rules.
+    V1Alpha5,
 }
 
 /// Version used when the shared configuration has no `data_version` field.
 pub const LEGACY: DataVersion = DataVersion::V1Alpha1;
 /// Version written by new stores and the target of an explicit upgrade.
-pub const CURRENT: DataVersion = DataVersion::V1Alpha4;
+pub const CURRENT: DataVersion = DataVersion::V1Alpha5;
 /// All readable and writable data versions, in migration order.
-pub const SUPPORTED: [DataVersion; 4] = [
+pub const SUPPORTED: [DataVersion; 5] = [
     LEGACY,
     DataVersion::V1Alpha2,
     DataVersion::V1Alpha3,
+    DataVersion::V1Alpha4,
     CURRENT,
 ];
 
@@ -46,6 +49,7 @@ impl DataVersion {
             Self::V1Alpha2 => "v1alpha2",
             Self::V1Alpha3 => "v1alpha3",
             Self::V1Alpha4 => "v1alpha4",
+            Self::V1Alpha5 => "v1alpha5",
         }
     }
 
@@ -58,12 +62,16 @@ impl DataVersion {
     pub(crate) const fn requires_valid_tag_indentation(self) -> bool {
         match self {
             Self::V1Alpha1 | Self::V1Alpha2 => false,
-            Self::V1Alpha3 | Self::V1Alpha4 => true,
+            Self::V1Alpha3 | Self::V1Alpha4 | Self::V1Alpha5 => true,
         }
     }
 
     pub(crate) const fn optional_tag_descriptions(self) -> bool {
-        matches!(self, Self::V1Alpha4)
+        matches!(self, Self::V1Alpha4 | Self::V1Alpha5)
+    }
+
+    pub(crate) const fn tasks(self) -> bool {
+        matches!(self, Self::V1Alpha5)
     }
 
     /// Whether ordinary operations can safely read and preserve this representation.
@@ -71,7 +79,9 @@ impl DataVersion {
     /// return false here and supply a fail-closed migration before registration.
     pub const fn usable(self) -> bool {
         match self {
-            Self::V1Alpha1 | Self::V1Alpha2 | Self::V1Alpha3 | Self::V1Alpha4 => true,
+            Self::V1Alpha1 | Self::V1Alpha2 | Self::V1Alpha3 | Self::V1Alpha4 | Self::V1Alpha5 => {
+                true
+            }
         }
     }
 }
@@ -236,6 +246,11 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         source: DataVersion::V1Alpha3.as_str(),
+        target: DataVersion::V1Alpha4.as_str(),
+        transform: migrate_marker,
+    },
+    Migration {
+        source: DataVersion::V1Alpha4.as_str(),
         target: CURRENT.as_str(),
         transform: migrate_marker,
     },
@@ -351,7 +366,7 @@ mod tests {
                 version
             );
         }
-        assert!("v1alpha5".parse::<DataVersion>().is_err());
+        assert!("v1alpha6".parse::<DataVersion>().is_err());
         assert_eq!(MIGRATIONS.len(), SUPPORTED.len() - 1);
         for (step, pair) in MIGRATIONS.iter().zip(SUPPORTED.windows(2)) {
             assert_eq!(step.source, pair[0].as_str());
@@ -364,14 +379,14 @@ mod tests {
         let text = "# Team\r\nformat_version=1\ndata_version  = 'v1alpha1'  # comment\r\n[tags]\nprivate_patterns = [\r\n  'local-*', # keep\n]\r\n";
         assert_eq!(
             migrate(text, LEGACY).unwrap(),
-            text.replace("'v1alpha1'", "\"v1alpha4\"")
+            text.replace("'v1alpha1'", "\"v1alpha5\"")
         );
         assert!(migrate("invalid = [", LEGACY).is_err());
         let original = "\u{feff}# Team\r\nformat_version = 1\r\n";
         let migrated = migrate(original, LEGACY).unwrap();
         assert_eq!(
             migrated,
-            "\u{feff}data_version = \"v1alpha4\"\r\n# Team\r\nformat_version = 1\r\n"
+            "\u{feff}data_version = \"v1alpha5\"\r\n# Team\r\nformat_version = 1\r\n"
         );
         assert_eq!(
             toml::from_str::<toml::Value>(&migrated).unwrap()["data_version"].as_str(),
@@ -393,7 +408,7 @@ mod tests {
             )
             .replace('\n', newline);
             let migrated = migrate(&text, LEGACY).unwrap();
-            assert_eq!(migrated, text.replace("'v1alpha1'", "\"v1alpha4\""));
+            assert_eq!(migrated, text.replace("'v1alpha1'", "\"v1alpha5\""));
             crate::config::validate_migration(&migrated, CURRENT.as_str()).unwrap();
         }
     }

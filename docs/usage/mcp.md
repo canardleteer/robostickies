@@ -138,6 +138,8 @@ entirely, along with personal configuration.
 | `get_context`, `get_config` | Guidance and effective defaults |
 | `create_note`, `get_note`, `update_note` | Record and maintain notes; archive through `status` |
 | `list_notes` | Browse and search using shared filters |
+| `list_tasks` | Task states, readiness, blockers, deferral, and ordinary note filters |
+| `render_task_sheet` | Ordered instructions and prerequisite context; defaults to public scope |
 | `review_notes` | Complete review, defaulting to public visibility |
 | `create_tag`, `list_tags`, `get_tag` | Define tags and explore short/full guidance |
 | `publish_note` | Immediately copy or preview a private note as public |
@@ -179,6 +181,13 @@ Note creation, updates, and publication accept optional `body_format` strings.
 Updates also accept `clear_body_format: true`; set and clear conflict. Hints
 appear in `metadata.body_format` and never interpret the body. Publication drops
 the source hint and accepts a public hint only when explicitly supplied.
+
+In `v1alpha5`, note creation and publication accept complete `task` or `sheet`
+specifications. Updates accept typed patches or `clear_task` / `clear_sheet`.
+Ordinary note envelopes retain structured data in `metadata`. Start with
+`list_tasks` and `{"ready": true}` to discover eligible work, or render a saved
+sheet. See [tasks and sheets](tasks-and-sheets.md) for defaults, graph rules,
+private scope, conversion, and explicit structured publication.
 
 Context, configuration, validation, and upgrade results include structured
 `upgrade` advice. `upgrade_store` accepts `dry_run`, `defer`, and `keep_snapshot`;

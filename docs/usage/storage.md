@@ -62,6 +62,20 @@ exposed as `metadata.body_format`. It does not select a parser or execute the
 body. Unknown strings and legacy non-string metadata remain readable. See
 [body hints](getting-started.md#bodies-and-optional-format-hints) for editing rules.
 
+In `v1alpha5`, `task` and `sheet` are reserved, mutually exclusive mappings.
+Task metadata holds work state, prerequisite UUIDs, and optional deferral;
+sheet metadata holds authored membership and ordering. Dated deferrals are
+written as quoted RFC3339 strings. Ordinary note responses expose both mappings
+in `metadata`. Other custom fields remain opaque. See
+[tasks and sheets](tasks-and-sheets.md) for schemas and editing rules.
+
+The redb cache stores compact task/sheet records alongside note records, with
+indexes for state, prerequisites in both directions, sheet membership, and dated
+deferrals. Note bodies stay in the note records. Synchronization still inspects
+Markdown sources to detect direct edits. Readiness is evaluated from compact
+graph records at the operation's captured time; it is never persisted and does
+not require a cache rewrite when a deferral expires.
+
 The `tooling` filename is the required tag identifier. Its optional `description`
 explains the name in the catalog, and its optional body supplies Markdown usage
 guidance. Self-explanatory tags usually do not need a description:

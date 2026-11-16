@@ -9,12 +9,14 @@ pub mod build_info;
 pub mod cli;
 pub mod config;
 mod document;
+mod graph;
 mod index;
 pub mod mcp;
 mod migration;
 pub mod model;
 mod snapshot;
 pub mod store;
+pub mod tasks;
 pub mod version;
 
 pub use model::{Error, Result};
