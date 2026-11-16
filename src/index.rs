@@ -54,7 +54,7 @@ pub(crate) struct Index {
 }
 
 impl Index {
-    /// Load compact graph data without hydrating any note bodies.
+    /// Load graph records without reading note bodies.
     pub fn graph(&self) -> anyhow::Result<Graph> {
         let tx = self.db.begin_read()?;
         let tasks = tx.open_table(TASKS)?;
@@ -984,7 +984,7 @@ fn render_sheet(sheet: &TaskSheet) -> String {
     if !sheet.diagnostics.is_empty() {
         markdown.push_str("\n## Diagnostics\n\n");
         for diagnostic in &sheet.diagnostics {
-            // Diagnostics are generated prose, rather than authored Markdown.
+            // Escape generated diagnostic messages before embedding them in Markdown.
             let escaped: String = diagnostic
                 .message
                 .chars()

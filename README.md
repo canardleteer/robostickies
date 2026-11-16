@@ -7,10 +7,10 @@
 [![crates.io](https://img.shields.io/crates/v/robostickies.svg)](https://crates.io/crates/robostickies)
 [![Workspace checks](https://github.com/canardleteer/robostickies/actions/workflows/check.yml/badge.svg?branch=main&event=push)](https://github.com/canardleteer/robostickies/actions/workflows/check.yml)
 
-Enables taking brief repository notes for humans and agents, during development
-and available through a CLI interface and an MCP `stdio` server. Capture what
-gets in the way (`papercut`), what helps (`paperclip`), and general
-observations with your own tags, or track structured tasks and saved work sheets.
+Keep brief repository notes for humans and agents through a CLI and an MCP
+`stdio` server. Record friction with `papercut` and useful practices with
+`paperclip`, or use your own tags. Track task prerequisites and deferral, and
+render saved instruction sheets.
 
 Markdown with YAML frontmatter is the source of truth. Shared files can travel
 in Git history; private definitions and notes live in an ignored namespace.

@@ -25,8 +25,9 @@ installation checkpoint before verifying changed behavior. A missing tool, old
 catalog, or mismatched build means the connection is unverified. The executable
 on disk and a child CLI's version do not identify an existing MCP process.
 Use one of the fresh-connection routes below rather than claiming an upgrade.
-When two installations share the same compiled fields, also attest the executable
-used by the running server; hashing only the current file on disk is insufficient.
+When two installations share the same compiled fields, also identify the
+executable used by the running server. Hashing the current file on disk is
+insufficient.
 
 Self-drive observations, synthetic notes, fixture tag definitions, and run records
 are private by default. Use MCP `private: true` or CLI `--private` when creating
@@ -46,8 +47,9 @@ and all copied responses under `.robostickies/private/runs/<run>/` in the checko
 Record returned IDs, revisions, current source paths, and fixture ownership,
 including untagged notes and publication copies. Keep full tool responses separate
 from ownership records; select a response by operation and UUID before reading its
-fields. For each case, record the expected result before checking it. Identify the execution channel and keep failed or
-pending checks visible; child-process success does not verify the agent's
+fields. For each case, record the expected result before checking it. Identify
+the execution channel and keep failed or pending checks visible; child-process
+success does not verify the agent's
 installed connection. Keep case statuses current as their checks finish. Reserve
 time within the run deadline for fixture cleanup and a compact report; stop
 adding cases when that reserve is reached and leave unexecuted cases pending.
@@ -75,8 +77,8 @@ automatically. An undefined tag returns `not_found`, rather than a usage error.
 Creation and update return `note` inside an envelope, while `get_note` returns the
 note itself. Inspect Markdown to verify paths and frontmatter. Select fixtures by
 exact returned UUIDs: body search is a substring filter and does not identify one
-note. Treat product revisions as opaque guards. Use independent checksums to verify source
-bytes.
+note. Treat product revisions as opaque guards. Use independent checksums to
+verify source bytes.
 
 Edits and publication, including previews, require `expected_revision` from the
 latest successful read or save; CLI update/archive/unarchive/publish require
@@ -133,8 +135,8 @@ comparison difference rather than treating an earlier matching inventory as proo
 Verify disruptive fixture setup before crediting a result: read manually authored
 YAML through the product and inspect the intended cache damage or failure
 precondition. A setup or assertion error is evidence about the testing process.
-Correct the check against the same saved responses or source bytes when possible, retaining
-the failed attempt and its adjudication separately.
+Correct the check against the same saved responses or source bytes when possible,
+retaining the failed attempt and its adjudication separately.
 
 A `papercut` explains how to reproduce a problem and what should have happened.
 Describe the actual result and its cost, then suggest a correction if known.

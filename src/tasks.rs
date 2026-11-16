@@ -161,7 +161,8 @@ pub struct SheetPatch {
 }
 
 /// Note filters plus task state and independent readiness filters, combined with AND.
-/// Empty states selects todo and in_progress; all_task_states includes terminal work.
+/// An empty `states` list selects `todo` and `in_progress` by default.
+/// Set `all_task_states` to include terminal work.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct TaskQuery {

@@ -3,8 +3,8 @@
 Use these cases when changing task graphs, saved sheets, or the v1alpha5 boundary.
 Read the [usage contract](../../../../docs/usage/tasks-and-sheets.md) and discover
 the installed schemas first. Select the affected cases to supplement the ordinary
-feature matrix. Keep IDs, revisions, raw responses, expectations, and cleanup ownership in
-the private ledger. Use separate owned current and legacy stores; do not upgrade
+feature matrix. Keep IDs, revisions, raw responses, expectations, and cleanup
+ownership in the private ledger. Use separate owned current and legacy stores; do not upgrade
 the developer's working store to make a feature test possible.
 
 ## Installed workflows
@@ -45,8 +45,8 @@ boundary was observed. For an active unfinished fixture with no prerequisites,
 first compare that time with the deadline, then check active deferral before the
 deadline or readiness at/after it. Record a pre-deadline response as a valid
 pre-expiry observation and continue polling for the post-expiry case.
-For a live expiry case, use bounded read-only polling and
-retain the responses; an arbitrary sleep does not prove the deadline passed.
+For a live expiry case, use bounded read-only polling and retain the responses;
+an arbitrary sleep does not prove the deadline passed.
 Keep exact equality-at-deadline assertions in controlled-clock regression tests.
 
 When comparing equivalent task pages or rendered sheets from separate calls,
